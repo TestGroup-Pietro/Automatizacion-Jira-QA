@@ -1,0 +1,62 @@
+name: 'Jira Webhook Direct'
+
+on:
+    repository_dispatch:
+        types: [jira_trigger] # Debe coincidir con el vent_type de jira
+
+permissions:
+    contents: write # Necesario para crear carpetas
+
+jobs:
+    process_jira_webhook:
+        runs-on: ubuntu-latest # correra en linux-ubuntu
+        #1. Define la clave de la incidencia como variable de entorno
+        env:
+            ISSUE_KEY: ${{ github.event.client_payload.issue_key}} #variable de entorno que conecta con jira
+
+        steps:
+            - name: Checkout Repository # Clona el repositorio en el runner.
+              uses: actions/checkout@v4
+
+            - name: Crear Carpeta CP y Carpeta de la Incidencia
+              run: bash create_folders.sh "${{ env.ISSUE_KEY }}" # ejecuta el script bash
+
+            - name: Set up Python
+              uses: actions/setup-python@v5 # prepara python
+              with:
+                python-version: '3.12' # indica la version de python que instalare
+        # Instalación optimizada (Usando ruta explicita)
+        # 4ta. Cache pip dependencies
+            - name: Cache pip dependencies
+              uses: actions/cache@v4 # intenta utilizar el cache para dependencias pip
+              with:
+                # RUTA CORREGIDA: Usa una ubicacion temporal explicita para gerantizar consistencia
+                  path: ${{ runner.temp }}/pip_cache_deps # carpeta creada especifica para recrear cashear
+                  key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }} # estructura de cashe /sistemaoperativo/hash de archivo requirements.txt
+                  resotr-keys:  
+                    ${{ runner.os }}-pip-
+
+        # 4b. Intall Dependencies
+            - name: Install dependencies (Usando requirements.txt)
+              env:
+                # Indicamos a pip que use la MISMA RUTA explicita para guardar/buscar la caché
+                PIP_CACHE_DIR: ${{ runner.temp }}/pip_cache_deps
+              run: pip install -r requirements.txt # instala las librerias escritas en el archivo requirements.txt
+
+            # 5. Ejecuta el script principal de python (Descarga + Procesamiento)
+            - name: Ejecutar Descargar de Adjuntos y Procesamiento
+              run: python get_isse_attachments.py
+              env:
+                # --- Credenciales y Secrets ---
+                URL_JIRA: ${{ secrets.URL_JIRA }}
+                USER_JIRA: ${{ secrets.USER_JIRA }}
+                JIRA_TOKEN: ${{ secrets.JIRA_TOKEN }}
+                OPENROUTER_APIKEY: ${{ secrets.OPENROUTER_APIKEY }}
+
+                # Credenciales de SMTP -- Gmail
+                EMAIL_KEY: ${{ secrets.EMAIL_SENDER }}
+                PASSWORD_SENDER: ${{ secrets.PASSWORD_SENDER }}
+
+                # Variables dinamicas
+                ISSUE_KEY: ${{ env.ISSUE_KEY }}
+                TARGET_DIR: ${{ env.TARGET_DIR }}

@@ -1,0 +1,8 @@
+requests
+pypdf
+python-docx
+openai
+openpyxl
+pandas
+xlswriter
+

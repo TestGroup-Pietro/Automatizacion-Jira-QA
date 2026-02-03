@@ -1,0 +1,22 @@
+# Nombre del flujo de trabajo: El nombre que aparecera en la pestaña 
+"Actions" de tu repositorio
+name: Flujo de Trabajo CI Basico
+
+# Eventos que disparan el flujo de trabajo: Define cuando se ejecutará
+este archivo.
+# En este caso, se ejecutará en cada 'push' a la rama 'main' o 'master'.
+on:
+push:
+branches:
+- main-master# También puedes añadir 'pull_request' para que se ejecute al abrir una 
+PR
+ # pull_request:
+ #   branches:
+ #     - main
+
+# Trabajos (Jobs): Define una o varias tareas que se ejecutarán.
+# Los trabajos se ejecutan en paralelao por defecto, a menos que se 
+especifiquen lo contrario:
+
+jobs:
+ # 
