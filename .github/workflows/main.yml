@@ -33,7 +33,7 @@ jobs:
                 # RUTA CORREGIDA: Usa una ubicacion temporal explicita para gerantizar consistencia
                   path: ${{ runner.temp }}/pip_cache_deps # carpeta creada especifica para recrear cashear
                   key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }} # estructura de cashe /sistemaoperativo/hash de archivo requirements.txt
-                  resotr-keys:  
+                  restore-keys:  
                     ${{ runner.os }}-pip-
 
         # 4b. Intall Dependencies
@@ -45,7 +45,7 @@ jobs:
 
             # 5. Ejecuta el script principal de python (Descarga + Procesamiento)
             - name: Ejecutar Descargar de Adjuntos y Procesamiento
-              run: python get_isse_attachments.py
+              run: python get_issue_attachments.py
               env:
                 # --- Credenciales y Secrets ---
                 URL_JIRA: ${{ secrets.URL_JIRA }}
