@@ -60,15 +60,10 @@ def crear_subtarea_jira(parent_key, titulo):
 		}
 	}
 
-	try:
-		response = httpx.post(url, json=payload, auth=auth, headers=headers)
-		if response.status_code == 201:
-			print(f"   [Jira] Subtarea creada: {titulo}")
-		else:
-			print(f"   [Jira] Error al crear subtarea {titulo}: {response.status_code}")
-	except Exception as e:
-		print(f"   [Jira] Excepción al crear subtarea: {e}")
-		print(f"-> Error al crear subtarea {titulo}: {response.text}")
+	response = httpx.post(url, json=payload, auth=auth, headers=headers)
+	if response.status_code != 201:
+        # Esto te dirá EXACTAMENTE qué campo falta o está mal
+		print(f"[Jira] Error {response.status_code}: {response.text}")
 
 # --- FUNCIONES ASÍNCRONAS ---
 
@@ -126,7 +121,7 @@ async def download_single_attachment(client: httpx.AsyncClient, attachment: dict
 		print(f"ERROR al descargar '{filename}': {e}")
 		return False
 
-async def generate_folder_structure(base_path: Path, filename: str) -> Path:
+def generate_folder_structure(base_path: Path, filename: str) -> Path:
 	"""
 	Crea la estructura de carpetas requerida y el archivo Test Plan.
 	Retorna la ruta del archivo Test Plan generado.
