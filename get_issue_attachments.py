@@ -53,19 +53,19 @@ def crear_subtarea_jira(parent_key, titulo):
 
 	# PAYLOAD OPTIMIZADO PARA AUTOMATIZACIÓN
 	payload = {
-    "fields": {
-        "project": {
-            "key": project_key
-        },
-        "parent": {
-            "key": parent_key  # Esto vincula la subtarea al ticket SCRUM-6
-        },
-        "summary": titulo,
-        "issuetype": {
-            "id": "10048"      # Confirmado en tu imagen
+        "fields": {
+            "project": {
+                "key": project_key
+            },
+            "parent": {
+                "key": parent_key
+            },
+            "summary": titulo,
+            "issuetype": {
+                "id": "10048"  # ID verificado en tu configuración
+            }
         }
     }
-}
 	#para identificar lo que quiere jira de mi codigo
 	"""response = httpx.post(url, json=payload, auth=auth, headers=headers)
 	if response.status_code != 201:
@@ -73,11 +73,12 @@ def crear_subtarea_jira(parent_key, titulo):
 		print(f"[Jira] Error {response.status_code}: {response.text}")"""
 
 	try:
+        # Usamos requests de forma síncrona dentro del thread para mayor estabilidad
 		response = httpx.post(url, json=payload, auth=auth, headers=headers)
 		if response.status_code == 201:
 			print(f"   [Jira] Subtarea creada: {titulo}")
 		else:
-            # Imprimimos el error exacto para depurar si falla
+            # Esto nos dirá si falta algún campo obligatorio específico de tu Jira
 			print(f"[Jira] Error {response.status_code}: {response.text}")
 	except Exception as e:
 		print(f"   [Jira] Error de conexión: {e}")
