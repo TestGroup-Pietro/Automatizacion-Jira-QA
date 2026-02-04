@@ -56,6 +56,14 @@ jobs:
                 EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }} 
                 PASSWORD_SENDER: ${{ secrets.PASSWORD_SENDER }}
 
+                # Variables de Xray
+                XRAY_ID: ${{ secrets.XRAY_CLIENT_ID }}
+                XRAY_CLIENT: ${{ secrets.XRAY_CLIENT_PASSWORD}}
+                XRAY_URL_AUTH: ${{ secrets.URL_XRAY_AUTH }}
+                XRAY_URL_GRAPHQL: ${{ secrets.URL_XRAY_GRAPHQL }}
+
                 # Variables dinámicas
                 ISSUE_KEY: ${{ env.ISSUE_KEY }}
                 TARGET_DIR: ${{ env.TARGET_DIR }}
+                
+                

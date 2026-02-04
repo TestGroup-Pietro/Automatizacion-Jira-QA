@@ -11,18 +11,18 @@ from requests.auth import HTTPBasicAuth # Se mantiene para la autenticación bá
 # (Asumimos que estos servicios son síncronos o no pueden ser fácilmente refactorizados a async)
 # =========================================================================
 try:
-	# Nota: Si ProcessDOC, send_chat, createxlsx, y upload_attachment_to_jira
-	# tienen llamadas a API o I/O internas que son lentas, 
-	# se beneficiarían de ser refactorizadas a async/await internamente.
-	# Por ahora, los ejecutaremos dentro de un threadpool con asyncio.to_thread().
-	from services.process_doc import ProcessDOC
-	from services.email import enviar_email
+    # Nota: Si ProcessDOC, send_chat, createxlsx, y upload_attachment_to_jira
+    # tienen llamadas a API o I/O internas que son lentas, 
+    # se beneficiarían de ser refactorizadas a async/await internamente.
+    # Por ahora, los ejecutaremos dentro de un threadpool con asyncio.to_thread().
+    from services.process_doc import ProcessDOC
+    from services.email import enviar_email
 #    from services.iachat import send_chat
 #    from services.formatxlsx import createxlsx
-	from services.upload_attachment_to_jira import upload_attachment_to_jira
+    from services.upload_attachment_to_jira import upload_attachment_to_jira
 except ImportError as e:
-	print(f"ERROR CRÍTICO de importación: {e}. Verifique la estructura de carpetas de 'services'.")
-	sys.exit(1)
+    print(f"ERROR CRÍTICO de importación: {e}. Verifique la estructura de carpetas de 'services'.")
+    sys.exit(1)
 # =========================================================================
 
 # --- CONFIGURACIÓN DE ENTORNO ---
@@ -32,12 +32,78 @@ JIRA_TOKEN = os.getenv('JIRA_TOKEN')
 ISSUE_KEY = os.getenv('ISSUE_KEY')
 TARGET_DIR = os.getenv('TARGET_DIR')
 ATTACHMENT_ENDPOINT = f"{JIRA_URL}/rest/api/3/issue/{ISSUE_KEY}?fields=attachment"
+# Token Xray
+XRAY_ID = os.getenv('XRAY_CLIENT_ID')
+XRAY_PASSWORD = os.getenv('XRAY_CLIENT_PASSWORD')
+XRAY_AUTH = os.getenv('URL_XRAY_AUTH')
+XRAY_GRAPHQL = os.getenv('URL_XRAY_GRAPHQL')
+
 
 # Lista global para almacenar los metadatos de los adjuntos de Jira (payload)
 # Ahora no es estrictamente necesario que sea global si se maneja como retorno/parámetro.
 # La mantendremos para coherencia, pero la pasaremos como parámetro.
 attachments = [] 
 
+async def listar_plantillas(token):
+    """Muestra las plantillas disponibles para obtener el ID."""
+    url = XRAY_GRAPHQL
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    query = "{ getTemplates(limit: 50) { results { id name } } }"
+    async with httpx.AsyncClient() as client:
+        res = await client.post(url, json={"query": query}, headers=headers)
+        data = res.json()
+        templates = data.get('data', {}).get('getTemplates', {}).get('results', [])
+        print("\n--- LISTA DE PLANTILLAS XRAY ---")
+        for t in templates:
+            print(f"ID: {t['id']} | Nombre: {t['name']}")
+        print("--------------------------------\n")
+
+# --- FUNCIO DE XRAY TOKEN PARA TESTPLAN ---
+async def get_xray_token():
+    """Obtiene el token de acceso de Xray usando OAuth."""
+    url = XRAY_AUTH
+    payload = {
+        "client_id": XRAY_ID, 
+        "client_secret": XRAY_PASSWORD
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=payload)
+        response.raise_for_status()
+        return response.text.replace('"', '')
+
+async def generar_documento_xray(token, issue_id, template_id):
+    """Llama a la API GraphQL para generar el Test Plan."""
+    url = XRAY_GRAPHQL
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    
+    query = """
+    mutation ($issueId: String!, $templateId: String!) {
+        getDocReport(
+            issueId: $issueId,
+            templateId: $templateId,
+            outputFormat: "docx"
+        ) {
+            reportFilename
+            reportContent
+        }
+    }
+    """
+    
+    variables = {
+        "issueId": issue_id,
+        "templateId": template_id
+    }
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json={"query": query, "variables": variables}, headers=headers)
+        data = response.json()
+        if 'errors' in data:
+            raise Exception(f"Error en GraphQL: {data['errors']}")
+        report = data['data']['getDocReport']
+        return report['reportFilename'], report['reportContent']
 
 # --- FUNCION CREAR SUBTASK ESTRUCTURA CARPETAS ---
 def crear_subtarea_jira(parent_key, titulo):
@@ -61,7 +127,7 @@ def crear_subtarea_jira(parent_key, titulo):
             "summary": titulo,
             "issuetype": {"name": "Subtask"} # El nombre mágico que descubrimos
         }
-	}
+    }
 
     try:
         with httpx.Client(auth=auth) as client:
@@ -80,110 +146,110 @@ def crear_subtarea_jira(parent_key, titulo):
 # --- FUNCIONES ASÍNCRONAS ---
 
 async def fetch_jira_attachments_metadata(client: httpx.AsyncClient) -> list:
-	"""Conecta a la API de Jira y obtiene los metadatos de los adjuntos."""
-	global attachments # Para mantener la compatibilidad con la función de correo
+    """Conecta a la API de Jira y obtiene los metadatos de los adjuntos."""
+    global attachments # Para mantener la compatibilidad con la función de correo
 
-	if not all([JIRA_URL, JIRA_USER, JIRA_TOKEN, ISSUE_KEY, TARGET_DIR]):
-		print("ERROR CRÍTICO: Faltan credenciales o la ruta dinámica (TARGET_DIR) no se exportó.")
-		sys.exit(1)
-		
-	print(f"1. Buscando adjuntos para: {ISSUE_KEY}")
-	
-	try:
-		response = await client.get(ATTACHMENT_ENDPOINT, timeout=30.0)
-		response.raise_for_status() 
-		issue_data = response.json()
-		attachments = issue_data.get('fields', {}).get('attachment', []) # Asignamos al global
-		return attachments
-	except httpx.RequestError as e:
-		print(f"ERROR al conectar con la API de Jira: {e}")
-		sys.exit(1)
+    if not all([JIRA_URL, JIRA_USER, JIRA_TOKEN, ISSUE_KEY, TARGET_DIR]):
+        print("ERROR CRÍTICO: Faltan credenciales o la ruta dinámica (TARGET_DIR) no se exportó.")
+        sys.exit(1)
+        
+    print(f"1. Buscando adjuntos para: {ISSUE_KEY}")
+    
+    try:
+        response = await client.get(ATTACHMENT_ENDPOINT, timeout=30.0)
+        response.raise_for_status() 
+        issue_data = response.json()
+        attachments = issue_data.get('fields', {}).get('attachment', []) # Asignamos al global
+        return attachments
+    except httpx.RequestError as e:
+        print(f"ERROR al conectar con la API de Jira: {e}")
+        sys.exit(1)
 
 async def download_single_attachment(client: httpx.AsyncClient, attachment: dict, target_dir: str) -> bool:
-	filename = attachment['filename']
-	content_url = attachment['content']
-	filepath = Path(target_dir) / filename
+    filename = attachment['filename']
+    content_url = attachment['content']
+    filepath = Path(target_dir) / filename
 
-	# --- FILTRO DE ARCHIVOS ---
-	if "hu" not in filename.lower():
-		print(f"   -> Omitiendo '{filename}': No contiene el prefijo 'hu'.")
-		return False
-	# ---------------------------
-	
-	print(f"   -> Iniciando descarga: {filename}")
-	
-	try:
-		# [MODIFICACIÓN CLAVE]: Usamos client.get() en lugar de client.stream().
-		# Esto permite que httpx gestione automáticamente la redirección 303,
-		# y la respuesta final (file_response) será la que contenga el archivo real (código 200).
-		file_response = await client.get(content_url, follow_redirects=True, timeout=None)
-		
-		# Ahora, raise_for_status() se ejecuta en la respuesta 200 OK final, o falla solo si es 4xx/5xx.
-		file_response.raise_for_status()
-		
-		# [MODIFICACIÓN CLAVE]: Guardamos todo el contenido de una vez (file_response.content).
-		filepath.parent.mkdir(parents=True, exist_ok=True)
-		with open(filepath, 'wb') as f:
-			f.write(file_response.content)
-			
-		print(f"   -> Guardado OK: {filepath.name}")
-		return True
-		
-	except httpx.RequestError as e:
-		print(f"ERROR al descargar '{filename}': {e}")
-		return False
+    # --- FILTRO DE ARCHIVOS ---
+    if "hu" not in filename.lower():
+        print(f"   -> Omitiendo '{filename}': No contiene el prefijo 'hu'.")
+        return False
+    # ---------------------------
+    
+    print(f"   -> Iniciando descarga: {filename}")
+    
+    try:
+        # [MODIFICACIÓN CLAVE]: Usamos client.get() en lugar de client.stream().
+        # Esto permite que httpx gestione automáticamente la redirección 303,
+        # y la respuesta final (file_response) será la que contenga el archivo real (código 200).
+        file_response = await client.get(content_url, follow_redirects=True, timeout=None)
+        
+        # Ahora, raise_for_status() se ejecuta en la respuesta 200 OK final, o falla solo si es 4xx/5xx.
+        file_response.raise_for_status()
+        
+        # [MODIFICACIÓN CLAVE]: Guardamos todo el contenido de una vez (file_response.content).
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        with open(filepath, 'wb') as f:
+            f.write(file_response.content)
+            
+        print(f"   -> Guardado OK: {filepath.name}")
+        return True
+        
+    except httpx.RequestError as e:
+        print(f"ERROR al descargar '{filename}': {e}")
+        return False
 
 def generate_folder_structure(base_path: Path, filename: str) -> Path:
-	"""
-	Crea la estructura de carpetas requerida y el archivo Test Plan.
-	Retorna la ruta del archivo Test Plan generado.
-	"""
-	
-	# Limpiamos el nombre para crear una carpeta contenedora limpia
-	folder_name = filename.rsplit('.', 1)[0] # Quita la extension
-	root_hu_path = base_path / folder_name
+    """
+    Crea la estructura de carpetas requerida y el archivo Test Plan.
+    Retorna la ruta del archivo Test Plan generado.
+    """
+    
+    # Limpiamos el nombre para crear una carpeta contenedora limpia
+    folder_name = filename.rsplit('.', 1)[0] # Quita la extension
+    root_hu_path = base_path / folder_name
 
-	# Definimos 3 carpetas solicitadas
-	folders = [
-		"Estrategias de pruebas",
-		"Analisis y diseño de las pruebas",
-		"Ejecucion de pruebas"
-	]
+    # Definimos 3 carpetas solicitadas
+    folders = [
+        "Estrategias de pruebas",
+        "Analisis y diseño de las pruebas",
+        "Ejecucion de pruebas"
+    ]
 
-	# 1. Crea directorios
-	for folder in folders:
-		(root_hu_path / folder).mkdir(parents=True, exist_ok=True)
+    # 1. Crea directorios
+    for folder in folders:
+        (root_hu_path / folder).mkdir(parents=True, exist_ok=True)
 
-	return root_hu_path / "Estrategias de pruebas"
-	
-	# 2. Crear el documento 'Test Plan' dentro de 'Estrategias de pruebas'
+    return root_hu_path / "Estrategias de pruebas"
+    
+    # 2. Crear el documento 'Test Plan' dentro de 'Estrategias de pruebas'
 
 
-	# test_plan_path = root_hu_path / "Estrategias de pruebas"  # / f"Test Plan - {folder_name}.txt" se cambia para el - XrayTestplan
+    # test_plan_path = root_hu_path / "Estrategias de pruebas"  # / f"Test Plan - {folder_name}.txt" se cambia para el - XrayTestplan
 
-	# Contenido plantilla del Test Plan
-	# content = f"""=======================================
-	# TEST PLAN GENERADO AUTOMÁTICAMENTE
-# ========================================
-# Archivo Origen: {filename}
-# Fecha Generacion: {sys.version}
+    # Contenido plantilla del Test Plan
+    # content = f"""=======================================
+    # TEST PLAN GENERADO AUTOMÁTICAMENTE
+    # ========================================
+    # Archivo Origen: {filename}
+    # Fecha Generacion: {sys.version}
 
-# 1. ALCANCE
-#    - Pruebas funcionales para la historia: {folder_name}
+    # 1. ALCANCE
+    #    - Pruebas funcionales para la historia: {folder_name}
 
-# 2 ESTRATEGIAS
-#    - Tipos de prueba: Funcionales, Regresión.
+    # 2 ESTRATEGIAS
+    #    - Tipos de prueba: Funcionales, Regresión.
 
-# 3. RECURSOS y HERRAMIENTAS
-#    - Jira / Xray
+    # 3. RECURSOS y HERRAMIENTAS
+    #    - Jira / Xray
 
-# 4. CRITERIOS DE ACEPTACIÓN
-#    (A definir según análisis de la HU adjunta)
-# """
-# 	with open(test_plan_path, 'w', encoding='utf-8') as f:
-# 		f.write(content)
+    # 4. CRITERIOS DE ACEPTACIÓN
+    #    (A definir según análisis de la HU adjunta)
+    # """
+    # 	with open(test_plan_path, 'w', encoding='utf-8') as f:
+    # 		f.write(content)
 
-# 	return test_plan_path
+    # 	return test_plan_path
 
 async def process_single_file(filepath: Path) -> str | None:
    """
@@ -213,7 +279,7 @@ async def process_single_file(filepath: Path) -> str | None:
         # Usamos to_thread para la creación de subtareas individuales
         key_creada = await asyncio.to_thread(crear_subtarea_jira, ISSUE_KEY, titulo)
 
-		# Si es la de estrategia, la guardamos para subir el archivo ahí
+        # Si es la de estrategia, la guardamos para subir el archivo ahí
         if titulo == "Estrategia de Pruebas":
             subtask_estrategia_key = key_creada
 
@@ -222,181 +288,191 @@ async def process_single_file(filepath: Path) -> str | None:
     
    def sync_processing_workflow(target_subtask_key):
         try:
-            # 1. Preparamos las carpetas
+            # 1. Creamos carpetas basadas en la HU
             estrategia_folder = generate_folder_structure(filepath.parent, filepath.name)
             
-            # --- NUEVA LÓGICA DE DISTINCIÓN ---
-            nombre_archivo = filepath.name.lower()
+            # 2. Buscamos si existe un archivo de Test Plan generado en la raíz para moverlo
+            target_path = filepath.parent
+            for xray_file in target_path.glob("*.docx"):
+                # Si el nombre NO tiene 'hu', asumimos que es el de Xray generado (ej: SCRUM-36.docx)
+                if 'hu' not in xray_file.name.lower():
+                    destino_xray = estrategia_folder / xray_file.name
+                    xray_file.rename(destino_xray)
+                    print(f"   [Xray] Movido a Estrategias: {xray_file.name}")
+                    
+                    # Subir a Jira
+                    success = upload_attachment_to_jira(
+                        destino_xray, target_subtask_key, 
+                        JIRA_URL, JIRA_USER, JIRA_TOKEN
+                    )
+                    return destino_xray.name if success else None
             
-            # Si el archivo es el TEST PLAN de Xray (puedes ajustar la palabra clave)
-            if "test" in nombre_archivo or "plan" in nombre_archivo:
-                destino_final = estrategia_folder / filepath.name
-                
-                if destino_final.exists():
-                    destino_final.unlink()
-                
-                filepath.rename(destino_final)
-                print(f"   [Xray] Test Plan movido a Estrategias y subiendo a subtarea {target_subtask_key}...")
-                
-                # SOLO subimos a la subtarea si es el Test Plan
-                success = upload_attachment_to_jira(
-                    destino_final, 
-                    target_subtask_key, 
-                    JIRA_URL, JIRA_USER, JIRA_TOKEN
-                )
-                return destino_final.name if success else None
-
-            else:
-                # Si es la HU original, NO la movemos a 'Estrategias', 
-                # la dejamos en la carpeta raíz de la HU o donde prefieras.
-                print(f"   [HU] Archivo de Historia detectado: {filepath.name}. Se mantiene en la raíz.")
-                return None
-            # ----------------------------------
-                
+            return None
         except Exception as e:
             print(f"   [Error] {e}")
             return None
-		
-    # Ejecuta el flujo síncrono en un ThreadPool
    return await asyncio.to_thread(sync_processing_workflow, subtask_estrategia_key)
+   #Esto basicamente dice que retorna lo siguiente:
 
-#Esto basicamente dice que retorna lo siguiente:
+   # Un Texto (str): El nombre del archivo generado (ej: "Test Plan - HU_Login.txt") 
+   # si todo salió bien (se crearon las carpetas y se subió a Jira).
 
-# Un Texto (str): El nombre del archivo generado (ej: "Test Plan - HU_Login.txt") 
-# si todo salió bien (se crearon las carpetas y se subió a Jira).
-
-# Nada (None): Si hubo algún error o falló la subida.
-
+   # Nada (None): Si hubo algún error o falló la subida.
 
 async def main():
-	"""Función principal asíncrona que coordina todas las tareas. (Orquesta la descarga, creación de carpetas y notificación)"""
-	# Usamos la variable globales para almacenar metadatos y la ruta destino
-	global attachments, TARGET_DIR
 
-	# 1. VALIDACIÓN INICIAL
-	# Obtenemos la ruta donde se guardaran los archivos desde las variables de entorno
-	TARGET_DIR = os.getenv('TARGET_DIR')
-	current_issue_key = os.getenv('ISSUE_KEY')
+    """Función principal asíncrona que coordina todas las tareas. (Orquesta la descarga, creación de carpetas y notificación)"""
+    # Usamos la variable globales para almacenar metadatos y la ruta destino
+    global attachments, TARGET_DIR
 
-	# Si no existe la ruta de destino, detenemos el script por seguridad
-	if not TARGET_DIR or not current_issue_key:
-		print("ERROR: TARGET_DIR o ISSUE_KEY no configurados en el entorno.")
-		sys.exit(1)
+    # 1. VALIDACIÓN INICIAL
+    # Obtenemos la ruta donde se guardaran los archivos desde las variables de entorno
+    TARGET_DIR = os.getenv('TARGET_DIR')
+    current_issue_key = os.getenv('ISSUE_KEY')
 
-	# 2. CONFIGURACIÓN DE CONEXIÓN JIRA
-	# Preparamos la autenticación básica (Usuario + Token) para JIRA
-	auth = HTTPBasicAuth(JIRA_USER, JIRA_TOKEN) # permite alamcenar las credenciales de jira
-	
-	# Iniciamos el cliente HTTP asíncrono (httpx)
-	# Usamos 'async with' para segurar que la conexion se cierre correctamente al terminar
-	# httpx.AsyncClient es crucial para manejar la concurrencia eficiente
-	async with httpx.AsyncClient(auth=auth, headers={"Accept": "application/json"}) as client:
-		
-		# --- FASE 1: DESCARGA CONCURRENTE ---
-		
-		# 1. Obtener metadatos
-		# llamamos a la API de Jira para obtener la lista de archivos adjuntos del ticket
-		print(f"1. Obteniendo adjuntos de {current_issue_key}...")
-		attachments_metadata = await fetch_jira_attachments_metadata(client)
-		
-		# Si la lista está vacia, no hay nada que hacer, terminamos aquí. 
-		if not attachments_metadata:
-			print("No se encontraron archivos adjuntos para descargar. Proceso finalizado.")
-			return
+    # Si no existe la ruta de destino, detenemos el script por seguridad
+    if not TARGET_DIR or not current_issue_key:
+        print("ERROR: TARGET_DIR o ISSUE_KEY no configurados en el entorno.")
+        sys.exit(1)
 
-		print(f"2. {len(attachments_metadata)} adjuntos encontrados. Descargando de forma CONCURRENTE en '{TARGET_DIR}'...")
-		
-		# 2. Iniciar tareas de descarga concurrentes
-		# Creamos una lista de 'tasks' (tareas asíncronas)(cada "task" es una descarga individual)
-		download_tasks = [
-			download_single_attachment(client, attachment, TARGET_DIR) 
-			for attachment in attachments_metadata
-		]
-		
-		# Esperamos a que todas las descargas finalicen (se ejecutan en paralelo/concurrencia)
-		# asyncio.gather ejecuta dotas las descargas a la vez, primero espera y luego devuelve la lista de resultados
-		download_results = await asyncio.gather(*download_tasks)
-		download_count = sum(download_results) # Contamos cuántas descargas fueron exitosas
-		
-		print(f"3. Proceso de descarga finalizado. Total descargado: {download_count}")
-		
-		# si no descargo nada, se sale
-		if download_count == 0:
-			print("No se descargó ningún archivo. No hay nada que procesar.")
-			return
-		
+    # 2. CONFIGURACIÓN DE CONEXIÓN JIRA
+    # Preparamos la autenticación básica (Usuario + Token) para JIRA
+    auth = HTTPBasicAuth(JIRA_USER, JIRA_TOKEN) # permite alamcenar las credenciales de jira
+    
+    # Iniciamos el cliente HTTP asíncrono (httpx)
+    # Usamos 'async with' para segurar que la conexion se cierre correctamente al terminar
+    # httpx.AsyncClient es crucial para manejar la concurrencia eficiente
+    async with httpx.AsyncClient(auth=auth, headers={"Accept": "application/json"}) as client:
+        
+        # --- FASE 1: DESCARGA CONCURRENTE ---
+        
+        # 1. Obtener metadatos
+        # llamamos a la API de Jira para obtener la lista de archivos adjuntos del ticket
+        print(f"1. Obteniendo adjuntos de {current_issue_key}...")
+        attachments_metadata = await fetch_jira_attachments_metadata(client)
+        
+        # Si la lista está vacia, no hay nada que hacer, terminamos aquí. 
+        if not attachments_metadata:
+            print("No se encontraron archivos adjuntos para descargar. Proceso finalizado.")
+            return
 
+        print(f"2. {len(attachments_metadata)} adjuntos encontrados. Descargando de forma CONCURRENTE en '{TARGET_DIR}'...")
+        
+        # 2. Iniciar tareas de descarga concurrentes
+        # Creamos una lista de 'tasks' (tareas asíncronas)(cada "task" es una descarga individual)
+        download_tasks = [
+            download_single_attachment(client, attachment, TARGET_DIR) 
+            for attachment in attachments_metadata
+        ]
+        
+        # Esperamos a que todas las descargas finalicen (se ejecutan en paralelo/concurrencia)
+        # asyncio.gather ejecuta dotas las descargas a la vez, primero espera y luego devuelve la lista de resultados
+        download_results = await asyncio.gather(*download_tasks)
+        download_count = sum(download_results) # Contamos cuántas descargas fueron exitosas
+        
+        print(f"3. Proceso de descarga finalizado. Total descargado: {download_count}")
+        
+        # si no descargo nada, se sale
+        if download_count == 0:
+            print("No se descargó ningún archivo. No hay nada que procesar.")
+            return
+        
 
+#----------------------------------------------------------------------------------------------------------
+#----------------------------------------------------------------------------------------------------------
 
-		# --- FASE 2: PROCESAMIENTO (CREACIÓN DE CARPETAS) ---
-		# -- Modificacion Pietro --
-		target_path = Path(TARGET_DIR)
-		print("\n4. Creando estructuras de carpetas y Test Plans...")
-		
-		# PARTE ESENCIAL 1
-		# 1. Encontramos los archivos descargados que coincidan con el filtro 'hu'
-		files_to_process = [p for p in target_path.iterdir() if p.is_file() and 
-                    ('hu' in p.name.lower() or 'test' in p.name.lower())] # igual se formatea
-		
-		# 2. Iniciar tareas de procesamiento concurrentes (usando ThreadPool para I/O/CPU)
-		
-		process_tasks = [
-			process_single_file(filepath)
-			for filepath in files_to_process
-		]
-		
-		# Cada tarea ejecutará 'process_single_file' que ahora:
+        # --- FASE 2: GENERACIÓN AUTOMÁTICA DE XRAY ---
+        print("\n4. Generando Test Plan automáticamente desde Xray...")
+        try:
+            xray_token = await get_xray_token()
+            await listar_plantillas(xray_token) # Descomenta para ver tus IDs
+            
+            # Obtenemos el ID interno del ticket desde los metadatos de Jira
+            issue_id = attachments_metadata[0].get('id') 
+            template_id = "TU_ID_AQUI" # <--- REEMPLAZAR CON EL ID REAL
+            
+            filename_xray, content_b64 = await generar_documento_xray(xray_token, issue_id, template_id)
+            
+            xray_path = Path(TARGET_DIR) / filename_xray
+            with open(xray_path, "wb") as f:
+                f.write(base64.b64decode(content_b64))
+            print(f"   -> [Xray] Documento '{filename_xray}' generado.")
+        except Exception as e:
+            print(f"   -> [Aviso] Error Xray: {e}")
+
+        # --- FASE 3: PROCESAMIENTO (CREACIÓN DE CARPETAS) ---
+        # -- Modificacion Pietro --
+        target_path = Path(TARGET_DIR)
+        print("\n4. Creando estructuras de carpetas")
+        
+        # PARTE ESENCIAL 1
+        # 1. Encontramos los archivos descargados que coincidan con el filtro 'hu'
+        files_to_process = [p for p in target_path.iterdir() if p.is_file() and 'hu' in p.name.lower()] # igual se formatea
+        
+        # 2. Iniciar tareas de procesamiento concurrentes (usando ThreadPool para I/O/CPU)
+        
+        process_tasks = [
+            process_single_file(filepath)
+            for filepath in files_to_process
+        ]
+        
+        # Cada tarea ejecutará 'process_single_file' que ahora:
         # a. Crea las Subtareas en JIRA (Estrategias, Analisis, Ejecucion). <-- NUEVO
         # b. Crea las carpetas físicas locales (Estrategias, Analisis, Ejecucion).
         # c. Crea el archivo .txt del Test Plan
         # d. Lo sube a Jira como evidencia.
 
-		
-		# Ejecutamos todos los procesamientos en paralelo.
-		processed_results = await asyncio.gather(*process_tasks)
-		
-		# Filtramos para obtener solo los nombres de archivos (Test Plans) generados con éxito
-		archivos_generados = [name for name in processed_results if name is not None]
+        
+        # Ejecutamos todos los procesamientos en paralelo.
+        process_tasks = [process_single_file(filepath) for filepath in files_to_process]
+        processed_results = await asyncio.gather(*process_tasks)
+        
+        # Filtramos para obtener solo los nombres de archivos (Test Plans) generados con éxito
+        archivos_generados = [name for name in processed_results if name is not None]
 
-		print("5. Procesamiento de archivos adjuntos finalizado.")
-		
-		# --- FASE 3: NOTIFICACIÓN FINAL y REPORTE ---
-		
-		# Creamos una lista final para el reporte del correo
-		archivos_finales = list(archivos_generados)
+        print("5. Procesamiento de archivos adjuntos finalizado.")
+        
+        # --- FASE 4: NOTIFICACIÓN FINAL y REPORTE ---
+        
+        # Creamos una lista final para el reporte del correo
+        archivos_finales = list(archivos_generados)
 
-		# Agregamos también los nombre de los archivos originales descargados (HUs)
-		# para que el correo diga: "Se proceso HU-X y se generó Test-Plan-X"
-		for attachment in attachments:
-			if isinstance(attachment, dict) and 'filename' in attachment:
-				# Solo añadimos los originales que SÍ se descargaron/procesaron (los que tienen 'hu')
-				if 'hu' in attachment['filename'].lower():
-					archivos_finales.append(attachment['filename'])
+        # Agregamos también los nombre de los archivos originales descargados (HUs)
+        # para que el correo diga: "Se proceso HU-X y se generó Test-Plan-X"
+        for attachment in attachments:
+            if isinstance(attachment, dict) and 'filename' in attachment:
+                # Solo añadimos los originales que SÍ se descargaron/procesaron (los que tienen 'hu')
+                if 'hu' in attachment['filename'].lower():
+                    archivos_finales.append(attachment['filename'])
 
-		"""
-		Qué hace: Inicia un bucle (ciclo).
-		Traducción: "Para cada elemento (al que llamaremos attachment) que se encuentre dentro de la lista attachments"
-		La lista attachments contiene toda la información cruda que bajamos de Jira al principio (nombre, tamaño, link de descarga, autor, etc.).
-		"""
+        """
+        Qué hace: Inicia un bucle (ciclo).
+        Traducción: "Para cada elemento (al que llamaremos attachment) que se encuentre dentro de la lista attachments"
+        La lista attachments contiene toda la información cruda que bajamos de Jira al principio (nombre, tamaño, link de descarga, autor, etc.).
+        """
 
-		# Eliminar duplicados por seguridad (convertir a set y luego a list)
-		archivos_finales = list(set(archivos_finales))
-		
-		# Verificamos si se generó algún trabajo nuevo
-		if archivos_generados:
-			print("\n6. Enviando notificación por correo electrónico.")
-			# Enviamos el email. Usamos 'asyncio.to_thread' porque 'enviar_email'
-			# es una funcion asincrona (bloqueante) y no queremos congelar el script
-			await asyncio.to_thread(enviar_email, archivos_finales, current_issue_key)
-		else:
-			print("\n6. No se enviará correo. No se generaron archivos XLSX.")
+        # Eliminar duplicados por seguridad (convertir a set y luego a list)
+        archivos_finales = list(set(archivos_finales))
+        
+        # Verificamos si se generó algún trabajo nuevo
+        if archivos_generados:
+            print("\n6. Enviando notificación por correo electrónico.")
+            # Enviamos el email. Usamos 'asyncio.to_thread' porque 'enviar_email'
+            # es una funcion asincrona (bloqueante) y no queremos congelar el script
+            await asyncio.to_thread(enviar_email, archivos_finales, current_issue_key)
+        else:
+            print("\n6. No se enviará correo. No se generaron archivos XLSX.")
+
+
+
 
 
 # --- PUNTO DE ENTRADA PRINCIPAL ---
 if __name__ == "__main__":
-	try:
-		# Inicia el bucle de eventos de asyncio y ejecuta la función 'main'
-		asyncio.run(main())
-	except KeyboardInterrupt:
-		print("\nProceso interrumpido por el usuario.")
-		sys.exit(1)
+
+    try:
+        # Inicia el bucle de eventos de asyncio y ejecuta la función 'main'
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nProceso interrumpido por el usuario.")
+        sys.exit(1)
