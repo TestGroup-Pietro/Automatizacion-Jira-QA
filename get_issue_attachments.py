@@ -56,18 +56,12 @@ def crear_subtarea_jira(parent_key, titulo):
     # PAYLOAD DEFINITIVO PARA SUBTAREAS
     payload = {
         "fields": {
-            "project": {
-                "key": project_key
-            },
-            "parent": {
-                "key": parent_key  # El padre define que es una subtarea
-            },
+            "project": {"key": parent_key.split('-')[0]},
+            "parent": {"key": parent_key},
             "summary": titulo,
-            "issuetype": {
-                "name": "Subtask"      # ID verificado de tu Sub-task
-            }
+            "issuetype": {"name": "Subtask"} # El nombre mágico que descubrimos
         }
-    }
+	}
 
     try:
         # Usamos httpx que ya lo tienes importado para mantener consistencia
