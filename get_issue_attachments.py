@@ -240,7 +240,7 @@ async def process_single_file(filepath: Path) -> str | None:
             return None
 		
     # Ejecuta el flujo síncrono en un ThreadPool
-   return await asyncio.to_thread(sync_processing_workflow)
+   return await asyncio.to_thread(sync_processing_workflow, subtask_estrategia_key)
 
 #Esto basicamente dice que retorna lo siguiente:
 
