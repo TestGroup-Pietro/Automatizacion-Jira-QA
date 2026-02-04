@@ -15,7 +15,7 @@ def obtener_extension(cadena: str) -> str:
 # ------- Me permite Validar uploads -------
 
 # --- Clase Pirncipal ---
-class ProcessDoc:
+class ProcessDOC:
     # contructor
     def __init__(self, filename: str):
         self.filename = filename
