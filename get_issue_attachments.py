@@ -48,10 +48,10 @@ def crear_subtarea_jira(parent_key, titulo):
 	url = f"{JIRA_URL}/rest/api/3/issue"
 	auth = (JIRA_USER, JIRA_TOKEN)
 	headers = {"Accept": "application/json", "Content-Type": "application/json"}
-
+	
 	project_key = parent_key.split('-')[0]
 
-	# PAYLOAD OPTIMIZADO PARA AUTOMATIZACIÓN
+    # PAYLOAD MÍNIMO: Sin descripciones complejas que rompan la API
 	payload = {
         "fields": {
             "project": {
@@ -62,7 +62,7 @@ def crear_subtarea_jira(parent_key, titulo):
             },
             "summary": titulo,
             "issuetype": {
-                "id": "10048"  # ID verificado en tu configuración
+                "id": "10048"  # ID de Subtarea verificado en tu Jira
             }
         }
     }
