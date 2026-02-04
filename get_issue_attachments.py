@@ -60,6 +60,7 @@ def crear_subtarea_jira(parent_key, titulo):
 		}
 	}
 
+	#para identificar lo que quiere jira de mi codigo
 	response = httpx.post(url, json=payload, auth=auth, headers=headers)
 	if response.status_code != 201:
         # Esto te dirá EXACTAMENTE qué campo falta o está mal
