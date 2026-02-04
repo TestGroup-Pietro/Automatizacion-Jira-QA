@@ -223,7 +223,7 @@ async def process_single_file(filepath: Path) -> str | None:
    def sync_processing_workflow(target_subtask_key):
     try:
         # 1. Preparar las carpetas y obtener la ruta de destino
-        estrategia_folder = prepare_folder_structure(filepath.parent, filepath.name)
+        estrategia_folder = generate_folder_structure(filepath.parent, filepath.name)
         
         # 2. Definir la nueva ubicación del archivo original (Word/PDF)
         # Movemos el archivo de la raíz a la carpeta de 'Estrategias'
