@@ -64,7 +64,7 @@ def crear_subtarea_jira(parent_key, titulo):
             },
             "summary": titulo,
             "issuetype": {
-                "id": 10048      # ID verificado de tu Sub-task
+                "id": "10048"      # ID verificado de tu Sub-task
             }
         }
     }
