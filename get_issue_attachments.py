@@ -221,36 +221,41 @@ async def process_single_file(filepath: Path) -> str | None:
     # y espera el resultado de forma asíncrona.
     
    def sync_processing_workflow(target_subtask_key):
-    try:
-        # 1. Preparar las carpetas y obtener la ruta de destino
-        estrategia_folder = generate_folder_structure(filepath.parent, filepath.name)
-        
-        # 2. Definir la nueva ubicación del archivo original (Word/PDF)
-        # Movemos el archivo de la raíz a la carpeta de 'Estrategias'
-        destino_final = estrategia_folder / filepath.name
-        
-        # Movemos el archivo físicamente
-        if destino_final.exists():
-                destino_final.unlink() # Si ya existía un Test Plan viejo, lo borra para no dar error
+        try:
+            # 1. Preparamos las carpetas
+            estrategia_folder = generate_folder_structure(filepath.parent, filepath.name)
             
-        filepath.rename(destino_final)
-        print(f"   [Sistema] Documento de Xray movido a: {destino_final.name}")
+            # --- NUEVA LÓGICA DE DISTINCIÓN ---
+            nombre_archivo = filepath.name.lower()
+            
+            # Si el archivo es el TEST PLAN de Xray (puedes ajustar la palabra clave)
+            if "test" in nombre_archivo or "plan" in nombre_archivo:
+                destino_final = estrategia_folder / filepath.name
+                
+                if destino_final.exists():
+                    destino_final.unlink()
+                
+                filepath.rename(destino_final)
+                print(f"   [Xray] Test Plan movido a Estrategias y subiendo a subtarea {target_subtask_key}...")
+                
+                # SOLO subimos a la subtarea si es el Test Plan
+                success = upload_attachment_to_jira(
+                    destino_final, 
+                    target_subtask_key, 
+                    JIRA_URL, JIRA_USER, JIRA_TOKEN
+                )
+                return destino_final.name if success else None
 
-        # 3. Subir el documento REAL a JIRA (a la subtarea de estrategia)
-        print(f"   [Jira] Subiendo Test Plan real a la subtarea {target_subtask_key}...")
-        success = upload_attachment_to_jira(
-            destino_final, 
-            target_subtask_key, 
-            JIRA_URL, 
-            JIRA_USER, 
-            JIRA_TOKEN
-        )
-        
-        return destino_final.name if success else None
-            
-    except Exception as e:
-        print(f"   [Error] No se pudo organizar el documento: {e}")
-        return None
+            else:
+                # Si es la HU original, NO la movemos a 'Estrategias', 
+                # la dejamos en la carpeta raíz de la HU o donde prefieras.
+                print(f"   [HU] Archivo de Historia detectado: {filepath.name}. Se mantiene en la raíz.")
+                return None
+            # ----------------------------------
+                
+        except Exception as e:
+            print(f"   [Error] {e}")
+            return None
 		
     # Ejecuta el flujo síncrono en un ThreadPool
    return await asyncio.to_thread(sync_processing_workflow, subtask_estrategia_key)
