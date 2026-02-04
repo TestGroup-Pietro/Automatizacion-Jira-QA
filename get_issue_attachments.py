@@ -201,50 +201,44 @@ async def process_single_file(filepath: Path) -> str | None:
         "Ejecucion de pruebas"
     ]
     
+   subtask_estrategia_key = None # Aquí guardaremos la key específica
+
+
    print(f"   -> Creando subtareas visuales en Jira para {ISSUE_KEY}...")
    for titulo in subtareas_titulos:
         # Usamos to_thread para la creación de subtareas individuales
-        await asyncio.to_thread(crear_subtarea_jira, ISSUE_KEY, titulo)
+        key_creada = await asyncio.to_thread(crear_subtarea_jira, ISSUE_KEY, titulo)
+
+		# Si es la de estrategia, la guardamos para subir el archivo ahí
+        if titulo == "Estrategia de Pruebas":
+            subtask_estrategia_key = key_creada
 
     # Esta es la CLAVE: Ejecuta la función síncrona en un hilo separado
     # y espera el resultado de forma asíncrona.
     
-   def sync_processing_workflow():
-        """Flujo de trabajo: Crear Carpetas -> Crear Test Plan -> Subir Test Plan a Jira"""
+   def sync_processing_workflow(target_subtask_key):
         try:
-            print(f"   -> Generando estructura de carpetas para: {filepath.name}")
-            
-            # --- NUEVO FLUJO DE AUTOMATIZACIÓN (Reemplaza a la IA) ---
-            
-            # 1. Generar Carpetas y Archivo Test Plan
-            # Nota: No necesitamos leer el contenido con ProcessDOC si solo queremos crear estructura,
-            # pero si quisiera sacar info del doc, lo usarías aquí.
-			# parnet: carpeta donde esta guardada el archivo
             generated_file_path = generate_folder_structure(filepath.parent, filepath.name)
             
             if generated_file_path and generated_file_path.exists():
-                print(f"   -> Estructura creada. Subiendo {generated_file_path.name} a Jira...")
+                # Si tenemos la key de la subtarea, la usamos. Si no, usamos la del padre por seguridad.
+                dest_key = target_subtask_key if target_subtask_key else ISSUE_KEY
                 
-                # 2. Subir el Test Plan generado a JIRA como evidencia
+                print(f"   -> Subiendo {generated_file_path.name} a la subtarea {dest_key}...")
+                
                 success = upload_attachment_to_jira(
                     generated_file_path, 
-                    ISSUE_KEY, 
+                    dest_key, # <--- AQUÍ SE SUBE A LA SUBTAREA
                     JIRA_URL, 
                     JIRA_USER, 
                     JIRA_TOKEN
                 )
-                
-                if success:
-                    print(f"   -> Flujo HU: Test Plan generado y subido a JIRA para {filepath.name}.")
-                    return generated_file_path.name
-                else:
-                    print(f"   -> Flujo HU: Falló la subida a JIRA para {filepath.name}.")
-            
+                return generated_file_path.name if success else None
             return None
         except Exception as e:
-            print(f"ERROR: Falló el procesamiento del archivo {filepath.name}: {e}")
+            print(f"ERROR: {e}")
             return None
-
+		
     # Ejecuta el flujo síncrono en un ThreadPool
    return await asyncio.to_thread(sync_processing_workflow)
 
