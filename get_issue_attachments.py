@@ -33,10 +33,10 @@ ISSUE_KEY = os.getenv('ISSUE_KEY')
 TARGET_DIR = os.getenv('TARGET_DIR')
 ATTACHMENT_ENDPOINT = f"{JIRA_URL}/rest/api/3/issue/{ISSUE_KEY}?fields=attachment"
 # Token Xray
-XRAY_ID = os.getenv('XRAY_CLIENT_ID')
-XRAY_PASSWORD = os.getenv('XRAY_CLIENT_PASSWORD')
-XRAY_AUTH = os.getenv('URL_XRAY_AUTH')
-XRAY_GRAPHQL = os.getenv('URL_XRAY_GRAPHQL')
+XRAY_ID = os.getenv('XRAY_ID')
+XRAY_PASSWORD = os.getenv('XRAY_CLIENT')
+XRAY_AUTH = os.getenv('XRAY_URL_AUTH')
+XRAY_GRAPHQL = os.getenv('XRAY_URL_GRAPHQL')
 
 
 # Lista global para almacenar los metadatos de los adjuntos de Jira (payload)
