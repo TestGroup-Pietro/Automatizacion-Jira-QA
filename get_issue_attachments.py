@@ -154,32 +154,36 @@ def generate_folder_structure(base_path: Path, filename: str) -> Path:
 	for folder in folders:
 		(root_hu_path / folder).mkdir(parents=True, exist_ok=True)
 
+	return root_hu_path / "Estrategias de pruebas"
+	
 	# 2. Crear el documento 'Test Plan' dentro de 'Estrategias de pruebas'
-	test_plan_path = root_hu_path / "Estrategias de pruebas" / f"Test Plan - {folder_name}.txt"
+
+
+	# test_plan_path = root_hu_path / "Estrategias de pruebas"  # / f"Test Plan - {folder_name}.txt" se cambia para el - XrayTestplan
 
 	# Contenido plantilla del Test Plan
-	content = f"""========================================
-TEST PLAN GENERADO AUTOMÁTICAMENTE
-========================================
-Archivo Origen: {filename}
-Fecha Generacion: {sys.version}
+	# content = f"""=======================================
+	# TEST PLAN GENERADO AUTOMÁTICAMENTE
+# ========================================
+# Archivo Origen: {filename}
+# Fecha Generacion: {sys.version}
 
-1. ALCANCE
-   - Pruebas funcionales para la historia: {folder_name}
+# 1. ALCANCE
+#    - Pruebas funcionales para la historia: {folder_name}
 
-2 ESTRATEGIAS
-   - Tipos de prueba: Funcionales, Regresión.
+# 2 ESTRATEGIAS
+#    - Tipos de prueba: Funcionales, Regresión.
 
-3. RECURSOS y HERRAMIENTAS
-   - Jira / Xray
+# 3. RECURSOS y HERRAMIENTAS
+#    - Jira / Xray
 
-4. CRITERIOS DE ACEPTACIÓN
-   (A definir según análisis de la HU adjunta)
-"""
-	with open(test_plan_path, 'w', encoding='utf-8') as f:
-		f.write(content)
+# 4. CRITERIOS DE ACEPTACIÓN
+#    (A definir según análisis de la HU adjunta)
+# """
+# 	with open(test_plan_path, 'w', encoding='utf-8') as f:
+# 		f.write(content)
 
-	return test_plan_path
+# 	return test_plan_path
 
 async def process_single_file(filepath: Path) -> str | None:
    """
@@ -217,27 +221,35 @@ async def process_single_file(filepath: Path) -> str | None:
     # y espera el resultado de forma asíncrona.
     
    def sync_processing_workflow(target_subtask_key):
-        try:
-            generated_file_path = generate_folder_structure(filepath.parent, filepath.name)
+    try:
+        # 1. Preparar las carpetas y obtener la ruta de destino
+        estrategia_folder = prepare_folder_structure(filepath.parent, filepath.name)
+        
+        # 2. Definir la nueva ubicación del archivo original (Word/PDF)
+        # Movemos el archivo de la raíz a la carpeta de 'Estrategias'
+        new_filepath = estrategia_folder / filepath.name
+        
+        # Movemos el archivo físicamente
+        filepath.rename(new_filepath)
+        print(f"   -> Archivo movido a: {new_filepath.relative_to(filepath.parent.parent)}")
+
+        # 3. Subir el documento REAL a JIRA (a la subtarea de estrategia)
+        if new_filepath.exists():
+            print(f"   -> Subiendo documento original {new_filepath.name} a la subtarea {target_subtask_key}...")
             
-            if generated_file_path and generated_file_path.exists():
-                # Si tenemos la key de la subtarea, la usamos. Si no, usamos la del padre por seguridad.
-                dest_key = target_subtask_key if target_subtask_key else ISSUE_KEY
-                
-                print(f"   -> Subiendo {generated_file_path.name} a la subtarea {dest_key}...")
-                
-                success = upload_attachment_to_jira(
-                    generated_file_path, 
-                    dest_key, # <--- AQUÍ SE SUBE A LA SUBTAREA
-                    JIRA_URL, 
-                    JIRA_USER, 
-                    JIRA_TOKEN
-                )
-                return generated_file_path.name if success else None
-            return None
-        except Exception as e:
-            print(f"ERROR: {e}")
-            return None
+            success = upload_attachment_to_jira(
+                new_filepath, 
+                target_subtask_key, 
+                JIRA_URL, 
+                JIRA_USER, 
+                JIRA_TOKEN
+            )
+            return new_filepath.name if success else None
+            
+        return None
+    except Exception as e:
+        print(f"ERROR en flujo de archivos: {e}")
+        return None
 		
     # Ejecuta el flujo síncrono en un ThreadPool
    return await asyncio.to_thread(sync_processing_workflow, subtask_estrategia_key)
@@ -317,7 +329,8 @@ async def main():
 		
 		# PARTE ESENCIAL 1
 		# 1. Encontramos los archivos descargados que coincidan con el filtro 'hu'
-		files_to_process = [p for p in target_path.iterdir() if p.is_file() and 'hu' in p.name.lower()] # igual se formatea
+		files_to_process = [p for p in target_path.iterdir() if p.is_file() and 
+                    ('hu' in p.name.lower() or 'test' in p.name.lower())] # igual se formatea
 		
 		# 2. Iniciar tareas de procesamiento concurrentes (usando ThreadPool para I/O/CPU)
 		
