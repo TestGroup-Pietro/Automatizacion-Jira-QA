@@ -45,7 +45,7 @@ def crear_subtarea_jira(parent_key, titulo):
     NUEVA LÓGICA: Crea una subtarea real en la interfaz de Jira.
     Esto genera la estructura visual de 'Estrategia, Análisis y Ejecución'.
     """
-	url = f"{URL_JIRA}/rest/api/3/issue"
+	url = f"{JIRA_URL}/rest/api/3/issue"
 	auth = (JIRA_USER, JIRA_TOKEN)
 	headers = {"Accept": "application/json", "Content-Type": "application/json"}
 
