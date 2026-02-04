@@ -81,7 +81,7 @@ async def generar_documento_xray(token, issue_id, template_id):
     
     query = """
     mutation ($issueId: String!, $templateId: String!) {
-        generateDocument(
+        getDocReport(
             issueId: $issueId,
             templateId: $templateId,
             outputFormat: "docx"
@@ -100,12 +100,18 @@ async def generar_documento_xray(token, issue_id, template_id):
     async with httpx.AsyncClient() as client:
         response = await client.post(url, json={"query": query, "variables": variables}, headers=headers)
         data = response.json()
+        
+        # 1. Verificamos si hay errores en la respuesta
         if 'errors' in data:
-            # Esto dirá exactamente que campo espera la API si 'generateDocument' falla
             raise Exception(f"Error en GraphQL: {data['errors']}")
-        report = data['data'].get['generateDocument']
+            
+        # 2. Extraemos el reporte usando exactamente el nombre 'getDocReport'
+        report = data.get('data', {}).get('getDocReport')
+        
         if not report:
-            raise Exception("No se recibió contenido en el reporte")
+            raise Exception(f"No se recibió contenido en el reporte. Respuesta completa: {data}")
+            
+        # Retornamos el nombre del archivo y el contenido en base64
         return report['reportFilename'], report['reportContent']
 
 # --- FUNCION CREAR SUBTASK ESTRUCTURA CARPETAS ---
@@ -393,16 +399,17 @@ async def main():
             
             # Obtenemos el ID interno del ticket desde los metadatos de Jira
             issue_id = attachments_metadata[0].get('id') 
-            template_id = "TU_ID_AQUI" # <--- REEMPLAZAR CON EL ID REAL
+            template_id = "1" # <--- REEMPLAZAR CON EL ID REAL
             
-            filename_xray, content_b64 = await generar_documento_xray(xray_token, issue_id, template_id)
-            
-            xray_path = Path(TARGET_DIR) / filename_xray
-            with open(xray_path, "wb") as f:
-                f.write(base64.b64decode(content_b64))
-            print(f"   -> [Xray] Documento '{filename_xray}' generado.")
+            try:
+                filename_xray, content_b64 = await generar_documento_xray(xray_token, issue_id, template_id)
+                # ... resto del código de guardado ...
+            except Exception as e_xray:
+                print(f"   [!] Error al generar (esperado): {e_xray}")
+                print("   >>> REVISA ARRIBA EN EL LOG EL ID DE LA PLANTILLA <<<")
+
         except Exception as e:
-            print(f"   -> [Aviso] Error Xray: {e}")
+            print(f"   [Aviso] Error en fase Xray: {e}")
 
         # --- FASE 3: PROCESAMIENTO (CREACIÓN DE CARPETAS) ---
         target_path = Path(TARGET_DIR)
