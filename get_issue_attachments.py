@@ -41,47 +41,45 @@ attachments = []
 
 # --- FUNCION CREAR SUBTASK ESTRUCTURA CARPETAS ---
 def crear_subtarea_jira(parent_key, titulo):
-	"""
-    NUEVA LÓGICA: Crea una subtarea real en la interfaz de Jira.
-    Esto genera la estructura visual de 'Estrategia, Análisis y Ejecución'.
     """
-	url = f"{JIRA_URL}/rest/api/3/issue"
-	auth = (JIRA_USER, JIRA_TOKEN)
-	headers = {"Accept": "application/json", "Content-Type": "application/json"}
-	
-	project_key = parent_key.split('-')[0]
+    Crea una subtarea real en Jira vinculada al ticket padre.
+    """
+    url = f"{JIRA_URL}/rest/api/3/issue"
+    auth = (JIRA_USER, JIRA_TOKEN)
+    headers = {
+        "Accept": "application/json", 
+        "Content-Type": "application/json"
+    }
+    
+    project_key = parent_key.split('-')[0]
 
-    # PAYLOAD MÍNIMO: Sin descripciones complejas que rompan la API
-	payload = {
+    # PAYLOAD DEFINITIVO PARA SUBTAREAS
+    payload = {
         "fields": {
             "project": {
                 "key": project_key
             },
             "parent": {
-                "key": parent_key
+                "key": parent_key  # El padre define que es una subtarea
             },
             "summary": titulo,
             "issuetype": {
-                "id": "10048"  # ID de Subtarea verificado en tu Jira
+                "id": 10048      # ID verificado de tu Sub-task
             }
         }
     }
-	#para identificar lo que quiere jira de mi codigo
-	"""response = httpx.post(url, json=payload, auth=auth, headers=headers)
-	if response.status_code != 201:
-        # Esto te dirá EXACTAMENTE qué campo falta o está mal
-		print(f"[Jira] Error {response.status_code}: {response.text}")"""
 
-	try:
-        # Usamos requests de forma síncrona dentro del thread para mayor estabilidad
-		response = httpx.post(url, json=payload, auth=auth, headers=headers)
-		if response.status_code == 201:
-			print(f"   [Jira] Subtarea creada: {titulo}")
-		else:
-            # Esto nos dirá si falta algún campo obligatorio específico de tu Jira
-			print(f"[Jira] Error {response.status_code}: {response.text}")
-	except Exception as e:
-		print(f"   [Jira] Error de conexión: {e}")
+    try:
+        # Usamos httpx que ya lo tienes importado para mantener consistencia
+        with httpx.Client(auth=auth) as client:
+            response = client.post(url, json=payload, headers=headers)
+            if response.status_code == 201:
+                print(f"   [Jira] Subtarea creada con éxito: {titulo}")
+            else:
+                # Si falla, esto nos dirá qué campo falta (ej. Prioridad o Componente)
+                print(f"[Jira] Error {response.status_code} en '{titulo}': {response.text}")
+    except Exception as e:
+        print(f"   [Jira] Error de conexión: {e}")
 
 # --- FUNCIONES ASÍNCRONAS ---
 
