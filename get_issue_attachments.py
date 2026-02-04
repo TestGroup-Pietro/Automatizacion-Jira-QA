@@ -227,28 +227,29 @@ async def process_single_file(filepath: Path) -> str | None:
         
         # 2. Definir la nueva ubicación del archivo original (Word/PDF)
         # Movemos el archivo de la raíz a la carpeta de 'Estrategias'
-        new_filepath = estrategia_folder / filepath.name
+        destino_final = estrategia_folder / filepath.name
         
         # Movemos el archivo físicamente
-        filepath.rename(new_filepath)
-        print(f"   -> Archivo movido a: {new_filepath.relative_to(filepath.parent.parent)}")
+        if destino_final.exists():
+                destino_final.unlink() # Si ya existía un Test Plan viejo, lo borra para no dar error
+            
+        filepath.rename(destino_final)
+        print(f"   [Sistema] Documento de Xray movido a: {destino_final.name}")
 
         # 3. Subir el documento REAL a JIRA (a la subtarea de estrategia)
-        if new_filepath.exists():
-            print(f"   -> Subiendo documento original {new_filepath.name} a la subtarea {target_subtask_key}...")
+        print(f"   [Jira] Subiendo Test Plan real a la subtarea {target_subtask_key}...")
+        success = upload_attachment_to_jira(
+            destino_final, 
+            target_subtask_key, 
+            JIRA_URL, 
+            JIRA_USER, 
+            JIRA_TOKEN
+        )
+        
+        return destino_final.name if success else None
             
-            success = upload_attachment_to_jira(
-                new_filepath, 
-                target_subtask_key, 
-                JIRA_URL, 
-                JIRA_USER, 
-                JIRA_TOKEN
-            )
-            return new_filepath.name if success else None
-            
-        return None
     except Exception as e:
-        print(f"ERROR en flujo de archivos: {e}")
+        print(f"   [Error] No se pudo organizar el documento: {e}")
         return None
 		
     # Ejecuta el flujo síncrono en un ThreadPool
