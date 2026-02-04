@@ -64,16 +64,18 @@ def crear_subtarea_jira(parent_key, titulo):
 	}
 
     try:
-        # Usamos httpx que ya lo tienes importado para mantener consistencia
         with httpx.Client(auth=auth) as client:
             response = client.post(url, json=payload, headers=headers)
             if response.status_code == 201:
-                print(f"   [Jira] Subtarea creada con éxito: {titulo}")
+                subtask_key = response.json().get("key") # Capturamos la KEY de la subtarea
+                print(f"   [Jira] Subtarea creada: {titulo} ({subtask_key})")
+                return subtask_key # Retornamos la key
             else:
-                # Si falla, esto nos dirá qué campo falta (ej. Prioridad o Componente)
-                print(f"[Jira] Error {response.status_code} en '{titulo}': {response.text}")
+                print(f"[Jira] Error {response.status_code}: {response.text}")
+                return None
     except Exception as e:
         print(f"   [Jira] Error de conexión: {e}")
+        return None
 
 # --- FUNCIONES ASÍNCRONAS ---
 
