@@ -52,20 +52,13 @@ def crear_subtarea_jira(parent_key, titulo):
 	project_key = parent_key.split('-')[0]
 
 	payload = {
-        "fields": {
-            "project": {
-                "key": project_key  # Aseguramos que el proyecto sea el mismo
-            },
-            "parent": {
-                "key": parent_key   # El ticket padre (ej: SCRUM-6)
-            },
-            "summary": titulo,
-            "issuetype": {
-                "name": "Sub-task"  # Debe el nombre ser exactamente el mismo que el del Jira
-            }
-        }
+    "fields": {
+        "project": {"key": project_key},
+        "parent": {"key": parent_key},
+        "summary": titulo,
+        "issuetype": {"name": "Subtarea"} # Cambiamos "Sub-task" por "Subtarea"
     }
-
+}
 	#para identificar lo que quiere jira de mi codigo
 	"""response = httpx.post(url, json=payload, auth=auth, headers=headers)
 	if response.status_code != 201:
