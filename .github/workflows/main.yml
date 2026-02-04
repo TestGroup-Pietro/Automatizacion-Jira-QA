@@ -43,20 +43,19 @@ jobs:
                 PIP_CACHE_DIR: ${{ runner.temp }}/pip_cache_deps
               run: pip install -r requirements.txt # instala las librerias escritas en el archivo requirements.txt
 
-            # 5. Ejecuta el script principal de python (Descarga + Procesamiento)
+            # 5. Ejecuta el script principal de python
             - name: Ejecutar Descargar de Adjuntos y Procesamiento
               run: python get_issue_attachments.py
               env:
-                # --- Credenciales y Secrets ---
                 URL_JIRA: ${{ secrets.URL_JIRA }}
                 USER_JIRA: ${{ secrets.USER_JIRA }}
                 JIRA_TOKEN: ${{ secrets.JIRA_TOKEN }}
                 OPENROUTER_APIKEY: ${{ secrets.OPENROUTER_APIKEY }}
 
-                # Credenciales de SMTP -- Gmail
-                EMAIL_KEY: ${{ secrets.EMAIL_SENDER }}
+                # CORRECCIÓN AQUÍ:
+                EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }} 
                 PASSWORD_SENDER: ${{ secrets.PASSWORD_SENDER }}
 
-                # Variables dinamicas
+                # Variables dinámicas
                 ISSUE_KEY: ${{ env.ISSUE_KEY }}
                 TARGET_DIR: ${{ env.TARGET_DIR }}
