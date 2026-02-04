@@ -45,19 +45,23 @@ XRAY_GRAPHQL = os.getenv('XRAY_URL_GRAPHQL')
 attachments = [] 
 
 async def listar_plantillas(token):
-    """Muestra las plantillas disponibles para obtener el ID."""
     url = XRAY_GRAPHQL
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    query = "{ getTemplates(limit: 50) { results { id name } } }"
+    # Query simplificada
+    query = "{ getTemplates(limit: 10) { results { id name } } }"
+    
     async with httpx.AsyncClient() as client:
         res = await client.post(url, json={"query": query}, headers=headers)
         data = res.json()
+        print(f"DEBUG CRUDO XRAY: {data}") # Esto nos dirá qué está pasando
+        
         templates = data.get('data', {}).get('getTemplates', {}).get('results', [])
         print("\n--- LISTA DE PLANTILLAS XRAY ---")
         for t in templates:
             print(f"ID: {t['id']} | Nombre: {t['name']}")
+        if not templates:
+            print("No se encontraron plantillas. Revisa permisos o si la lista está vacía.")
         print("--------------------------------\n")
-
 # --- FUNCIO DE XRAY TOKEN PARA TESTPLAN ---
 async def get_xray_token():
     """Obtiene el token de acceso de Xray usando OAuth."""
@@ -72,47 +76,39 @@ async def get_xray_token():
         return response.text.replace('"', '')
 
 async def generar_documento_xray(token, issue_id, template_id):
-    """Llama a la API GraphQL para generar el Test Plan."""
     url = XRAY_GRAPHQL
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     
-    query = """
-    mutation ($issueId: String!, $templateId: String!) {
-        getDocReport(
-            issueId: $issueId,
-            templateId: $templateId,
-            outputFormat: "docx"
-        ) {
-            reportFilename
-            reportContent
-        }
-    }
-    """
+    # Lista de nombres posibles para la función de generación en diferentes versiones de Xray
+    posibles_mutaciones = ["getDocReport", "generateDocument", "getDocumentReport"]
     
-    variables = {
-        "issueId": issue_id,
-        "templateId": template_id
-    }
-    
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url, json={"query": query, "variables": variables}, headers=headers)
-        data = response.json()
+    for mutacion in posibles_mutaciones:
+        query = f"""
+        mutation ($issueId: String!, $templateId: String!) {{
+            {mutacion}(
+                issueId: $issueId,
+                templateId: $templateId,
+                outputFormat: "docx"
+            ) {{
+                reportFilename
+                reportContent
+            }}
+        }}
+        """
+        variables = {"issueId": issue_id, "templateId": template_id}
         
-        # 1. Verificamos si hay errores en la respuesta
-        if 'errors' in data:
-            raise Exception(f"Error en GraphQL: {data['errors']}")
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, json={"query": query, "variables": variables}, headers=headers)
+            data = response.json()
             
-        # 2. Extraemos el reporte usando exactamente el nombre 'getDocReport'
-        report = data.get('data', {}).get('getDocReport')
-        
-        if not report:
-            raise Exception(f"No se recibió contenido en el reporte. Respuesta completa: {data}")
-            
-        # Retornamos el nombre del archivo y el contenido en base64
-        return report['reportFilename'], report['reportContent']
+            if 'errors' not in data:
+                report = data.get('data', {}).get(mutacion)
+                if report:
+                    print(f"¡Éxito! Usando mutación: {mutacion}")
+                    return report['reportFilename'], report['reportContent']
+    
+    # Si llega aquí es que ninguno funcionó
+    raise Exception(f"Ninguna mutación funcionó. Último error: {data.get('errors')}")
 
 # --- FUNCION CREAR SUBTASK ESTRUCTURA CARPETAS ---
 def crear_subtarea_jira(parent_key, titulo):
