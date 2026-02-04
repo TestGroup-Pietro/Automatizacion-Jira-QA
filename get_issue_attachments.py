@@ -51,14 +51,36 @@ def crear_subtarea_jira(parent_key, titulo):
 
 	project_key = parent_key.split('-')[0]
 
+	# PAYLOAD OPTIMIZADO PARA AUTOMATIZACIÓN
 	payload = {
-    "fields": {
-        "project": {"key": project_key},
-        "parent": {"key": parent_key},
-        "summary": titulo,
-        "issuetype": {"name": "Subtarea"} # Cambiamos "Sub-task" por "Subtarea"
+        "fields": {
+            "project": {
+                "key": project_key
+            },
+            "parent": {
+                "key": parent_key # Referencia obligatoria al ticket padre
+            },
+            "summary": titulo,
+            "description": {
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"Subtarea automatizada para {titulo}"
+                            }
+                        ]
+                    }
+                ]
+            },
+            "issuetype": {
+                "name": "Sub-task" # O prueba con "Subtarea" según tu configuración
+            }
+        }
     }
-}
 	#para identificar lo que quiere jira de mi codigo
 	"""response = httpx.post(url, json=payload, auth=auth, headers=headers)
 	if response.status_code != 201:
