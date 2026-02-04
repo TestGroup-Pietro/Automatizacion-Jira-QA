@@ -53,34 +53,19 @@ def crear_subtarea_jira(parent_key, titulo):
 
 	# PAYLOAD OPTIMIZADO PARA AUTOMATIZACIÓN
 	payload = {
-        "fields": {
-            "project": {
-                "key": project_key
-            },
-            "parent": {
-                "key": parent_key # Referencia obligatoria al ticket padre
-            },
-            "summary": titulo,
-            "description": {
-                "type": "doc",
-                "version": 1,
-                "content": [
-                    {
-                        "type": "paragraph",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"Subtarea automatizada para {titulo}"
-                            }
-                        ]
-                    }
-                ]
-            },
-            "issuetype": {
-                "id": "10048" # id de actividad
-            }
+    "fields": {
+        "project": {
+            "key": project_key
+        },
+        "parent": {
+            "key": parent_key  # Esto vincula la subtarea al ticket SCRUM-6
+        },
+        "summary": titulo,
+        "issuetype": {
+            "id": "10048"      # Confirmado en tu imagen
         }
     }
+}
 	#para identificar lo que quiere jira de mi codigo
 	"""response = httpx.post(url, json=payload, auth=auth, headers=headers)
 	if response.status_code != 201:
