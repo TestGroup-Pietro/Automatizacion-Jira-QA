@@ -81,7 +81,7 @@ async def generar_documento_xray(token, issue_id, template_id):
     
     query = """
     mutation ($issueId: String!, $templateId: String!) {
-        getDocReport(
+        generateDocument(
             issueId: $issueId,
             templateId: $templateId,
             outputFormat: "docx"
@@ -101,8 +101,11 @@ async def generar_documento_xray(token, issue_id, template_id):
         response = await client.post(url, json={"query": query, "variables": variables}, headers=headers)
         data = response.json()
         if 'errors' in data:
+            # Esto dirá exactamente que campo espera la API si 'generateDocument' falla
             raise Exception(f"Error en GraphQL: {data['errors']}")
-        report = data['data']['getDocReport']
+        report = data['data'].get['generateDocument']
+        if not report:
+            raise Exception("No se recibió contenido en el reporte")
         return report['reportFilename'], report['reportContent']
 
 # --- FUNCION CREAR SUBTASK ESTRUCTURA CARPETAS ---
@@ -382,6 +385,7 @@ async def main():
 #----------------------------------------------------------------------------------------------------------
 
         # --- FASE 2: GENERACIÓN AUTOMÁTICA DE XRAY ---
+        # -- Modificacion Pietro --
         print("\n4. Generando Test Plan automáticamente desde Xray...")
         try:
             xray_token = await get_xray_token()
@@ -401,7 +405,6 @@ async def main():
             print(f"   -> [Aviso] Error Xray: {e}")
 
         # --- FASE 3: PROCESAMIENTO (CREACIÓN DE CARPETAS) ---
-        # -- Modificacion Pietro --
         target_path = Path(TARGET_DIR)
         print("\n4. Creando estructuras de carpetas")
         
@@ -411,26 +414,29 @@ async def main():
         
         # 2. Iniciar tareas de procesamiento concurrentes (usando ThreadPool para I/O/CPU)
         
-        process_tasks = [
-            process_single_file(filepath)
-            for filepath in files_to_process
-        ]
+       # --- FASE 3: PROCESAMIENTO (ESTRUCTURA DE CARPETAS Y SUBTAREAS) ---
+        target_path = Path(TARGET_DIR)
+        print("\n4. Creando estructuras de carpetas y subtareas...")
         
-        # Cada tarea ejecutará 'process_single_file' que ahora:
-        # a. Crea las Subtareas en JIRA (Estrategias, Analisis, Ejecucion). <-- NUEVO
-        # b. Crea las carpetas físicas locales (Estrategias, Analisis, Ejecucion).
-        # c. Crea el archivo .txt del Test Plan
-        # d. Lo sube a Jira como evidencia.
+        # 1. Identificamos qué archivos 'hu' existen realmente en la carpeta
+        files_to_process = [p for p in target_path.iterdir() if p.is_file() and 'hu' in p.name.lower()]
+        
+        # 2. Ejecución ÚNICA y controlada
+        if files_to_process:
+            # Ejecutamos el procesamiento de cada archivo de forma concurrente
+            processed_results = await asyncio.gather(*(process_single_file(f) for f in files_to_process))
+            # Filtramos resultados exitosos
+            archivos_generados = [name for name in processed_results if name is not None]
+        else:
+            print("   -> No se encontraron archivos 'hu' para procesar carpetas.")
+            archivos_generados = []
 
-        
-        # Ejecutamos todos los procesamientos en paralelo.
-        process_tasks = [process_single_file(filepath) for filepath in files_to_process]
-        processed_results = await asyncio.gather(*process_tasks)
+        print("5. Procesamiento de archivos adjuntos finalizado.")
         
         # Filtramos para obtener solo los nombres de archivos (Test Plans) generados con éxito
         archivos_generados = [name for name in processed_results if name is not None]
 
-        print("5. Procesamiento de archivos adjuntos finalizado.")
+        
         
         # --- FASE 4: NOTIFICACIÓN FINAL y REPORTE ---
         
