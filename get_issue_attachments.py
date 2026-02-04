@@ -52,19 +52,35 @@ def crear_subtarea_jira(parent_key, titulo):
 	project_key = parent_key.split('-')[0]
 
 	payload = {
-		"field": {
-			"project": {"key": project_key},
-			"parent": {"key": parent_key},
+        "fields": {
+            "project": {
+                "key": project_key  # Aseguramos que el proyecto sea el mismo
+            },
+            "parent": {
+                "key": parent_key   # El ticket padre (ej: SCRUM-6)
+            },
             "summary": titulo,
-            "issuetype": {"name": "Sub-task"} # Asegúrate que Jira tenga este nombre de tipo
-		}
-	}
+            "issuetype": {
+                "name": "Sub-task"  # Debe el nombre ser exactamente el mismo que el del Jira
+            }
+        }
+    }
 
 	#para identificar lo que quiere jira de mi codigo
-	response = httpx.post(url, json=payload, auth=auth, headers=headers)
+	"""response = httpx.post(url, json=payload, auth=auth, headers=headers)
 	if response.status_code != 201:
         # Esto te dirá EXACTAMENTE qué campo falta o está mal
-		print(f"[Jira] Error {response.status_code}: {response.text}")
+		print(f"[Jira] Error {response.status_code}: {response.text}")"""
+
+	try:
+		response = httpx.post(url, json=payload, auth=auth, headers=headers)
+		if response.status_code == 201:
+			print(f"   [Jira] Subtarea creada: {titulo}")
+		else:
+            # Imprimimos el error exacto para depurar si falla
+			print(f"[Jira] Error {response.status_code}: {response.text}")
+	except Exception as e:
+		print(f"   [Jira] Error de conexión: {e}")
 
 # --- FUNCIONES ASÍNCRONAS ---
 
