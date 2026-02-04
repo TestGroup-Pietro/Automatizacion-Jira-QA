@@ -77,7 +77,7 @@ def crear_subtarea_jira(parent_key, titulo):
                 ]
             },
             "issuetype": {
-                "name": "Sub-task" # O prueba con "Subtarea" según tu configuración
+                "id": "10048" # id de actividad
             }
         }
     }
