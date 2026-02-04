@@ -37,7 +37,7 @@ def enviar_email(file_list: List[str], name_issue: str):
         <ul>
             {list_items}
         </ul>
-        <p>Este email confirma que los archivos '.xlsx' generados han sido subidos a la tarjeta de JIRA.</p>
+        <p>Este email confirma que los archivos y carpetas generados han sido subidos a la tarjeta de JIRA.</p>
         """
     
     # Crea el objeto MIME para el mensaje

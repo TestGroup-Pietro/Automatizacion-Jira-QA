@@ -368,7 +368,7 @@ async def main():
 			print("\n6. Enviando notificación por correo electrónico.")
 			# Enviamos el email. Usamos 'asyncio.to_thread' porque 'enviar_email'
 			# es una funcion asincrona (bloqueante) y no queremos congelar el script
-			await asyncio.to_thread(enviar_email, archivos_finales, ISSUE_KEY)
+			await asyncio.to_thread(enviar_email, archivos_finales, current_issue_key)
 		else:
 			print("\n6. No se enviará correo. No se generaron archivos XLSX.")
 
