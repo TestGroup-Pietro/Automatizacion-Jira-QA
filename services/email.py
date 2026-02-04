@@ -29,7 +29,7 @@ def enviar_email(file_list: List[str], name_issue: str):
     
     # 2. CONFIGURACIÓN DEL MENSAJE
     print("Enviando CORREO de cierre...")
-    SUBJECT = f"Proceso Finalizado | Ticket: {os.getenv('JIRA_ISSUE_KEY', 'Desconocido')}"
+    SUBJECT = f"Proceso Finalizado | Ticket: {name_issue}"
     
     BODY = f"""
         <h1 style='color:#1E90FF;'>Proceso de Adjuntos de JIRA Finalizado</h1><hr>
