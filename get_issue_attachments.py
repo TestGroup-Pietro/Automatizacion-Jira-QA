@@ -2,6 +2,7 @@ import os
 import sys
 import asyncio
 from pathlib import Path
+from urllib import response
 import httpx # Reemplazo moderno y asíncrono de 'requests'
 from requests.auth import HTTPBasicAuth # Se mantiene para la autenticación básica
 
@@ -36,6 +37,38 @@ ATTACHMENT_ENDPOINT = f"{JIRA_URL}/rest/api/3/issue/{ISSUE_KEY}?fields=attachmen
 # Ahora no es estrictamente necesario que sea global si se maneja como retorno/parámetro.
 # La mantendremos para coherencia, pero la pasaremos como parámetro.
 attachments = [] 
+
+
+# --- FUNCION CREAR SUBTASK ESTRUCTURA CARPETAS ---
+def crear_subtarea_jira(parent_key, titulo):
+	"""
+    NUEVA LÓGICA: Crea una subtarea real en la interfaz de Jira.
+    Esto genera la estructura visual de 'Estrategia, Análisis y Ejecución'.
+    """
+	url = f"{URL_JIRA}/rest/api/3/issue"
+	auth = (JIRA_USER, JIRA_TOKEN)
+	headers = {"Accept": "application/json", "Content-Type": "application/json"}
+
+	project_key = parent_key.split('-')[0]
+
+	payload = {
+		"field": {
+			"project": {"key": project_key},
+			"parent": {"key": parent_key},
+            "summary": titulo,
+            "issuetype": {"name": "Sub-task"} # Asegúrate que Jira tenga este nombre de tipo
+		}
+	}
+
+	try:
+		response = httpx.post(url, json=payload, auth=auth, headers=headers)
+		if response.status_code == 201:
+			print(f"   [Jira] Subtarea creada: {titulo}")
+		else:
+			print(f"   [Jira] Error al crear subtarea {titulo}: {response.status_code}")
+	except Exception as e:
+		print(f"   [Jira] Excepción al crear subtarea: {e}")
+		print(f"-> Error al crear subtarea {titulo}: {response.text}")
 
 # --- FUNCIONES ASÍNCRONAS ---
 
@@ -142,14 +175,34 @@ Fecha Generacion: {sys.version}
 	return test_plan_path
 
 async def process_single_file(filepath: Path) -> str | None:
+   """
+    MODIFICADO: Procesa el archivo, crea carpetas locales y crea subtareas en Jira.
     """
-    Envuelve la lógica síncrona de creación de carpetas y subida a Jira.
-    """
+    # 1. Filtramos por 'hu' como pediste
+   if 'hu' not in filepath.name.lower():
+        return None
+   
+   # Variable para el print (filepath.stem es el nombre sin .docx)
+   hu_name = filepath.stem
+   print(f"\n--- Procesando HU: {hu_name} ---")
+
+   # --- NUEVA LÓGICA PIETRO: Creación de subtareas antes del flujo síncrono ---
+   # Esto se hace aquí para aprovechar el contexto asíncrono
+   subtareas_titulos = [
+        "Estrategia de Pruebas",
+        "Analisis y diseño de pruebas",
+        "Ejecucion de pruebas"
+    ]
     
+   print(f"   -> Creando subtareas visuales en Jira para {ISSUE_KEY}...")
+   for titulo in subtareas_titulos:
+        # Usamos to_thread para la creación de subtareas individuales
+        await asyncio.to_thread(crear_subtarea_jira, ISSUE_KEY, titulo)
+
     # Esta es la CLAVE: Ejecuta la función síncrona en un hilo separado
     # y espera el resultado de forma asíncrona.
     
-    def sync_processing_workflow():
+   def sync_processing_workflow():
         """Flujo de trabajo: Crear Carpetas -> Crear Test Plan -> Subir Test Plan a Jira"""
         try:
             print(f"   -> Generando estructura de carpetas para: {filepath.name}")
@@ -186,7 +239,7 @@ async def process_single_file(filepath: Path) -> str | None:
             return None
 
     # Ejecuta el flujo síncrono en un ThreadPool
-    return await asyncio.to_thread(sync_processing_workflow)
+   return await asyncio.to_thread(sync_processing_workflow)
 
 #Esto basicamente dice que retorna lo siguiente:
 
@@ -204,10 +257,11 @@ async def main():
 	# 1. VALIDACIÓN INICIAL
 	# Obtenemos la ruta donde se guardaran los archivos desde las variables de entorno
 	TARGET_DIR = os.getenv('TARGET_DIR')
+	current_issue_key = os.getenv('ISSUE_KEY')
 
 	# Si no existe la ruta de destino, detenemos el script por seguridad
-	if not TARGET_DIR:
-		print("ERROR: No se puede iniciar el procesamiento. TARGET_DIR está vacío.")
+	if not TARGET_DIR or not current_issue_key:
+		print("ERROR: TARGET_DIR o ISSUE_KEY no configurados en el entorno.")
 		sys.exit(1)
 
 	# 2. CONFIGURACIÓN DE CONEXIÓN JIRA
@@ -223,6 +277,7 @@ async def main():
 		
 		# 1. Obtener metadatos
 		# llamamos a la API de Jira para obtener la lista de archivos adjuntos del ticket
+		print(f"1. Obteniendo adjuntos de {current_issue_key}...")
 		attachments_metadata = await fetch_jira_attachments_metadata(client)
 		
 		# Si la lista está vacia, no hay nada que hacer, terminamos aquí. 
@@ -251,6 +306,9 @@ async def main():
 			print("No se descargó ningún archivo. No hay nada que procesar.")
 			return
 		
+
+
+
 		# --- FASE 2: PROCESAMIENTO (CREACIÓN DE CARPETAS) ---
 		# -- Modificacion Pietro --
 		target_path = Path(TARGET_DIR)
@@ -268,9 +326,10 @@ async def main():
 		]
 		
 		# Cada tarea ejecutará 'process_single_file' que ahora:
-		# a. Crea las carpetas (Estrategias, Analisis, Ejecucion).
-		# b. Crea el archivo .txt del Test Plan
-		# c. Lo sube a Jira.
+        # a. Crea las Subtareas en JIRA (Estrategias, Analisis, Ejecucion). <-- NUEVO
+        # b. Crea las carpetas físicas locales (Estrategias, Analisis, Ejecucion).
+        # c. Crea el archivo .txt del Test Plan
+        # d. Lo sube a Jira como evidencia.
 
 		
 		# Ejecutamos todos los procesamientos en paralelo.
