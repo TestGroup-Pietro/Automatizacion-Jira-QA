@@ -45,39 +45,30 @@ XRAY_GRAPHQL = os.getenv('XRAY_URL_GRAPHQL')
 attachments = [] 
 
 async def listar_plantillas(token):
-    # Intentamos con la URL de GraphQL para listar
-    url = "https://xray.cloud.getxray.app/api/v2/graphql"
+    # Endpoint específico de Xporter para Jira Cloud
+    url = "https://xray.cloud.getxray.app/api/v2/xporter/templates"
     headers = {
         "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
+        "Accept": "application/json"
     }
-    
-    # Esta es la query exacta para pedir IDs en Xray Cloud
-    query = """
-    {
-        getTemplates(limit: 50) {
-            results {
-                id
-                name
-            }
-        }
-    }
-    """
     
     async with httpx.AsyncClient() as client:
-        response = await client.post(url, json={"query": query}, headers=headers)
-        data = response.json()
-        
-        print("\n=== [DIAGNÓSTICO] RESPUESTA DE PLANTILLAS ===")
-        print(data) # Esto mostrará el ID en el log de GitHub
-        
-        results = data.get('data', {}).get('getTemplates', {}).get('results', [])
-        if results:
-            for t in results:
-                print(f"✅ ENCONTRADA: ID={t['id']} | Nombre={t['name']}")
-        else:
-            print("❌ No se listaron plantillas. Posible error de permisos o query.")
-        print("============================================\n")
+        try:
+            response = await client.get(url, headers=headers)
+            if response.status_code == 200:
+                templates = response.json()
+                print("\n=== [ÉXITO] LISTA DE PLANTILLAS ENCONTRADAS ===")
+                for t in templates:
+                    # Buscamos el ID y el Nombre
+                    id_plantilla = t.get('id')
+                    nombre = t.get('name')
+                    print(f"ID: {id_plantilla} | Nombre: {nombre}")
+                print("==============================================\n")
+            else:
+                print(f"❌ Error al listar (Status {response.status_code}): {response.text}")
+        except Exception as e:
+            print(f"❌ Falló la conexión con Xporter: {e}")
+
 # --- FUNCIO DE XRAY TOKEN PARA TESTPLAN ---
 async def get_xray_token():
     """Obtiene el token de acceso de Xray usando OAuth."""
@@ -92,21 +83,37 @@ async def get_xray_token():
         return response.text.replace('"', '')
 
 async def generar_documento_xray(token, issue_id, template_id):
-    """Genera el documento usando la API REST de Xray Document Generator."""
-    # Nota: Usamos el endpoint REST v2 para generación de documentos
-    url = "https://xray.cloud.getxray.app/api/v2/documentgenerator/generate"
+    url = "https://xray.cloud.getxray.app/api/v2/graphql"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
+    # Esta es la mutación estándar de Cloud
+    query = """
+    mutation ($issueId: String!, $templateId: String!) {
+        generateDocument(
+            issueId: $issueId,
+            templateId: $templateId,
+            outputFormat: "docx"
+        ) {
+            reportFilename
+            reportContent
+        }
     }
+    """
     
-    # Payload para la API REST
-    payload = {
-        "query": "{ getTestPlan(issueId: \"" + issue_id + "\") { issueId } }", # Query mínima requerida
-        "templateId": int(template_id), # Importante: debe ser entero
-        "outputFormat": "docx"
+    variables = {
+        "issueId": issue_id,
+        "templateId": str(template_id)
     }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json={"query": query, "variables": variables}, headers=headers)
+        data = response.json()
+        
+        if 'errors' in data:
+            raise Exception(f"Error en GraphQL: {data['errors']}")
+            
+        report = data['data']['generateDocument']
+        return report['reportFilename'], report['reportContent']
 
     async with httpx.AsyncClient() as client:
         # En la API REST de Xray, el reporte viene directamente en el cuerpo o como JSON con base64
