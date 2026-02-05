@@ -62,19 +62,21 @@ async def get_xray_token():
 
 async def generar_documento_xray(token, issue_key):
     """
-    Lógica de inyección directa (como cuando probamos con ID 1 o 505).
-    Ahora usamos el ID 10191 que ya confirmamos.
+    Lógica de inyección directa:
+    Usa el ID 10191 que ya descubrimos y prueba con el comando de exportación.
     """
     url = XRAY_GRAPHQL
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     
-    # EL ID QUE ANTES ERA "ADIVINADO", AHORA ES REAL
+    # El ID que tus logs confirmaron
     ID_PLANTILLA = "10191" 
+    print(f"   -> [Xray] Intentando exportación directa con ID: {ID_PLANTILLA}")
 
-    # Esta es la mutación "plana" que usábamos al inicio
+    # Cambiamos el nombre de la acción a la que el motor de Xray usa para exportar
+    # Si falla, el error nos dirá exactamente cuál es el nombre permitido.
     query = """
     mutation {
-        generateDocument(
+        exportTestsReport(
             issueKey: "%s", 
             templateId: "%s", 
             outputFormat: "docx"
@@ -83,23 +85,24 @@ async def generar_documento_xray(token, issue_key):
             reportContent
         }
     }
-    """ % (issue_key, ID_PLANTILLA) # Inyección directa en el string
+    """ % (issue_key, ID_PLANTILLA)
 
     async with httpx.AsyncClient() as client:
-        # Enviamos la orden directa sin variables separadas, como un comando crudo
         response = await client.post(url, json={"query": query}, headers=headers)
         data = response.json()
         
         if "errors" in data:
-            # Si aquí falla, el servidor nos dirá si el error es el nombre 'generateDocument'
-            # o si el ID 10191 tiene algún problema de permisos.
-            raise Exception(f"Error Directo: {data['errors'][0].get('message')}")
+            error_msg = data['errors'][0].get('message')
+            # Este print es vital: si falla, nos dirá "Did you mean...?"
+            print(f"   [DEBUG] El servidor rechazó el comando. Respuesta: {data}")
+            raise Exception(f"Fallo en nombre de comando: {error_msg}")
 
-        report = data.get("data", {}).get("generateDocument")
-        if not report:
-            raise Exception(f"No se recibió contenido. Respuesta: {data}")
+        # Intentamos obtener el resultado de exportTestsReport
+        result = data.get("data", {}).get("exportTestsReport")
+        if not result:
+            raise Exception("No se recibió contenido del reporte.")
 
-        return report['reportFilename'], report['reportContent']
+        return result['reportFilename'], result['reportContent']
 
 # --- FUNCION CREAR SUBTASK ESTRUCTURA CARPETAS ---
 def crear_subtarea_jira(parent_key, titulo):
