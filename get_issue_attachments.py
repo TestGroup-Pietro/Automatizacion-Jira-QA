@@ -60,37 +60,45 @@ async def get_xray_token():
         response.raise_for_status()
         return response.text.replace('"', '')
 
-async def generar_documento_xray(token, issue_id):
-    """Busca la plantilla y genera el documento automáticamente."""
+async def generar_documento_xray(token, issue_key):
+    """Busca la plantilla y genera el documento con diagnóstico de campos."""
     url = XRAY_GRAPHQL
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     
-    # 1. PASO DE DESCUBRIMIENTO: Consultamos las plantillas disponibles
-    # Usamos 'getDocumentTemplates' que es el estándar actual en Xray Cloud
-    list_query = "{ getDocumentTemplates(limit: 20) { results { id name } } }"
+    # 1. PASO DE DESCUBRIMIENTO (Intentamos múltiples esquemas)
+    templates = []
+    # Probamos el esquema más común primero
+    query = "{ getDocumentTemplates(limit: 20) { results { id name } } }"
     
     async with httpx.AsyncClient() as client:
-        res_list = await client.post(url, json={"query": list_query}, headers=headers)
-        data_list = res_list.json()
+        res = await client.post(url, json={"query": query}, headers=headers)
+        data = res.json()
         
-        # Extraemos la lista de resultados
-        templates = data_list.get('data', {}).get('getDocumentTemplates', {}).get('results', [])
-        if not templates:
-            # Si falla el anterior, intentamos con el nombre de campo antiguo por si acaso
-            alt_query = "{ getDocTemplates(limit: 20) { results { id name } } }"
-            res_list = await client.post(url, json={"query": alt_query}, headers=headers)
-            templates = res_list.json().get('data', {}).get('getDocTemplates', {}).get('results', [])
+        # --- DIAGNÓSTICO EN CASO DE ERROR ---
+        if "errors" in data:
+            print(f"   [DEBUG] Error en Query 1: {data['errors'][0].get('message')}")
+            # Intento 2: Esquema alternativo
+            query = "{ getDocTemplates(limit: 20) { results { id name } } }"
+            res = await client.post(url, json={"query": query}, headers=headers)
+            data = res.json()
+        
+        # Extraemos resultados dinámicamente
+        if "data" in data and data["data"]:
+            first_key = list(data["data"].keys())[0]
+            templates = data["data"][first_key].get("results", [])
 
         if not templates:
-            raise Exception("No se pudieron listar las plantillas de Xray. Revisa permisos.")
+            # Si llegamos aquí, imprimimos el error real para saber qué pasó
+            print(f"   [DEBUG] Respuesta cruda de Xray: {data}")
+            raise Exception("No se encontraron plantillas. Revisa si el usuario tiene permisos de 'Xray View'.")
 
-        # 2. SELECCIÓN: Buscamos "Plantilla prueba" o la primera que diga "Test Plan"
-        # Si no encuentra ninguna por nombre, usará la primera de la lista (índice 0)
+        # 2. SELECCIÓN
         selected = next((t for t in templates if "Plantilla prueba" in t['name']), templates[0])
         template_id = selected['id']
-        print(f"   -> [Auto-Discovery] Usando: '{selected['name']}' (ID: {template_id})")
+        print(f"   -> [Xray] Plantilla detectada: '{selected['name']}' con ID: {template_id}")
 
-        # 3. GENERACIÓN: Usamos el ID encontrado para pedir el archivo
+        # 3. GENERACIÓN
+        # Usamos la mutación estándar
         gen_mutation = """
         mutation ($issueId: String!, $templateId: String!) {
             generateDocument(issueId: $issueId, templateId: $templateId, outputFormat: "docx") {
@@ -104,7 +112,7 @@ async def generar_documento_xray(token, issue_id):
         data_gen = res_gen.json()
         
         if 'errors' in data_gen:
-            raise Exception(f"Error GraphQL al generar: {data_gen['errors']}")
+            raise Exception(f"Error en generación: {data_gen['errors']}")
             
         report = data_gen['data']['generateDocument']
         return report['reportFilename'], report['reportContent']
