@@ -60,7 +60,7 @@ async def get_xray_token():
         response.raise_for_status()
         return response.text.replace('"', '')
 
-async def generar_documento_xray(token, issue_id, template_id):
+async def generar_documento_xray(token, issue_id):
     """Busca la plantilla y genera el documento automáticamente."""
     url = XRAY_GRAPHQL
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
