@@ -61,15 +61,14 @@ async def get_xray_token():
         return response.text.replace('"', '')
 
 async def generar_documento_xray(token, issue_key):
-    """Busca la plantilla usando getTestPlans con los campos correctos para Xray Cloud."""
+    """Generación de documento usando el esquema actualizado de Xray Cloud."""
     url = XRAY_GRAPHQL
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     
-    # 1. PASO DE DESCUBRIMIENTO
-    # Cambiamos 'id' por 'issueId' que es el estándar para el tipo TestPlan en Xray Cloud
+    # 1. PASO DE DESCUBRIMIENTO (Ya funciona según tus logs, pero lo mantenemos robusto)
     query = """
     {
-        getTestPlans(limit: 20) {
+        getTestPlans(limit: 10) {
             results {
                 issueId
                 jira(fields: ["summary"])
@@ -82,46 +81,22 @@ async def generar_documento_xray(token, issue_key):
         res = await client.post(url, json={"query": query}, headers=headers)
         data = res.json()
         
-        if "errors" in data:
-            # Si issueId también falla, intentamos una query genérica de búsqueda
-            print(f"   [DEBUG] Reintentando búsqueda alternativa...")
-            query = "{ getTemplates(limit: 20) { results { id name } } }"
-            res = await client.post(url, json={"query": query}, headers=headers)
-            data = res.json()
-
-        # Extracción flexible de resultados
-        templates = []
-        if "data" in data and data["data"]:
-            first_key = list(data["data"].keys())[0]
-            templates = data["data"][first_key].get("results", [])
-
+        # Extracción del ID (usamos el 10191 que ya vimos que detectas)
+        templates = data.get("data", {}).get("getTestPlans", {}).get("results", [])
         if not templates:
-            raise Exception("No se encontraron plantillas o Test Plans disponibles en Xray.")
-
-        # 2. SELECCIÓN DE LA PLANTILLA
-        # Intentamos buscar por el nombre que aparece en tu imagen: "Plantilla prueba"
-        selected = None
-        for t in templates:
-            # Buscamos el nombre en el campo 'name' o dentro del objeto 'jira' summary
-            summary = t.get('jira', {}).get('summary', '')
-            name = t.get('name', '')
-            if "Plantilla prueba" in summary or "Plantilla prueba" in name:
-                selected = t
-                break
+            raise Exception("No se encontraron plantillas.")
         
-        if not selected:
-            selected = templates[0]
-            
-        # Obtenemos el ID (puede venir como 'id' o 'issueId')
-        template_id = selected.get('issueId') or selected.get('id')
-        print(f"   -> [Xray] ID detectado: {template_id}")
+        template_id = templates[0]['issueId']
+        print(f"   -> [Xray] Usando ID: {template_id}")
 
-        # 3. GENERACIÓN
+        # 2. LA CORRECCIÓN CLAVE: Envolver en el nodo 'xray'
         gen_mutation = """
         mutation ($issueKey: String!, $templateId: String!) {
-            generateDocument(issueKey: $issueKey, templateId: $templateId, outputFormat: "docx") {
-                reportFilename
-                reportContent
+            xray {
+                generateDocument(issueKey: $issueKey, templateId: $templateId, outputFormat: "docx") {
+                    reportFilename
+                    reportContent
+                }
             }
         }
         """
@@ -130,9 +105,12 @@ async def generar_documento_xray(token, issue_key):
         data_gen = res_gen.json()
         
         if 'errors' in data_gen:
-            raise Exception(f"Error en generación: {data_gen['errors'][0].get('message')}")
+            error_msg = data_gen['errors'][0].get('message')
+            print(f"   [DEBUG] Error detallado: {data_gen}")
+            raise Exception(f"Error en generación: {error_msg}")
             
-        report = data_gen['data']['generateDocument']
+        # El acceso al dato también cambia por el nuevo nodo 'xray'
+        report = data_gen['data']['xray']['generateDocument']
         return report['reportFilename'], report['reportContent']
 
 # --- FUNCION CREAR SUBTASK ESTRUCTURA CARPETAS ---
