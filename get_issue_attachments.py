@@ -61,56 +61,44 @@ async def get_xray_token():
         return response.text.replace('"', '')
 
 async def generar_documento_xray(token, issue_key):
-    """Generación de documento usando el esquema actualizado de Xray Cloud."""
+    """
+    Lógica de inyección directa (como cuando probamos con ID 1 o 505).
+    Ahora usamos el ID 10191 que ya confirmamos.
+    """
     url = XRAY_GRAPHQL
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     
-    # 1. PASO DE DESCUBRIMIENTO (Ya funciona según tus logs, pero lo mantenemos robusto)
+    # EL ID QUE ANTES ERA "ADIVINADO", AHORA ES REAL
+    ID_PLANTILLA = "10191" 
+
+    # Esta es la mutación "plana" que usábamos al inicio
     query = """
-    {
-        getTestPlans(limit: 10) {
-            results {
-                issueId
-                jira(fields: ["summary"])
-            }
+    mutation {
+        generateDocument(
+            issueKey: "%s", 
+            templateId: "%s", 
+            outputFormat: "docx"
+        ) {
+            reportFilename
+            reportContent
         }
     }
-    """
-    
-    async with httpx.AsyncClient() as client:
-        res = await client.post(url, json={"query": query}, headers=headers)
-        data = res.json()
-        
-        # Extracción del ID (usamos el 10191 que ya vimos que detectas)
-        templates = data.get("data", {}).get("getTestPlans", {}).get("results", [])
-        if not templates:
-            raise Exception("No se encontraron plantillas.")
-        
-        template_id = templates[0]['issueId']
-        print(f"   -> [Xray] Usando ID: {template_id}")
+    """ % (issue_key, ID_PLANTILLA) # Inyección directa en el string
 
-        # 2. LA CORRECCIÓN CLAVE: Envolver en el nodo 'xray'
-        gen_mutation = """
-        mutation ($issueKey: String!, $templateId: String!) {
-            xray {
-                generateDocument(issueKey: $issueKey, templateId: $templateId, outputFormat: "docx") {
-                    reportFilename
-                    reportContent
-                }
-            }
-        }
-        """
-        variables = {"issueKey": issue_key, "templateId": str(template_id)}
-        res_gen = await client.post(url, json={"query": gen_mutation, "variables": variables}, headers=headers)
-        data_gen = res_gen.json()
+    async with httpx.AsyncClient() as client:
+        # Enviamos la orden directa sin variables separadas, como un comando crudo
+        response = await client.post(url, json={"query": query}, headers=headers)
+        data = response.json()
         
-        if 'errors' in data_gen:
-            error_msg = data_gen['errors'][0].get('message')
-            print(f"   [DEBUG] Error detallado: {data_gen}")
-            raise Exception(f"Error en generación: {error_msg}")
-            
-        # El acceso al dato también cambia por el nuevo nodo 'xray'
-        report = data_gen['data']['xray']['generateDocument']
+        if "errors" in data:
+            # Si aquí falla, el servidor nos dirá si el error es el nombre 'generateDocument'
+            # o si el ID 10191 tiene algún problema de permisos.
+            raise Exception(f"Error Directo: {data['errors'][0].get('message')}")
+
+        report = data.get("data", {}).get("generateDocument")
+        if not report:
+            raise Exception(f"No se recibió contenido. Respuesta: {data}")
+
         return report['reportFilename'], report['reportContent']
 
 # --- FUNCION CREAR SUBTASK ESTRUCTURA CARPETAS ---
