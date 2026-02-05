@@ -76,39 +76,32 @@ async def get_xray_token():
         return response.text.replace('"', '')
 
 async def generar_documento_xray(token, issue_id, template_id):
-    url = XRAY_GRAPHQL
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    """Genera el documento usando la API REST de Xray Document Generator."""
+    # Nota: Usamos el endpoint REST v2 para generación de documentos
+    url = "https://xray.cloud.getxray.app/api/v2/documentgenerator/generate"
     
-    # Lista de nombres posibles para la función de generación en diferentes versiones de Xray
-    posibles_mutaciones = ["getDocReport", "generateDocument", "getDocumentReport"]
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
     
-    for mutacion in posibles_mutaciones:
-        query = f"""
-        mutation ($issueId: String!, $templateId: String!) {{
-            {mutacion}(
-                issueId: $issueId,
-                templateId: $templateId,
-                outputFormat: "docx"
-            ) {{
-                reportFilename
-                reportContent
-            }}
-        }}
-        """
-        variables = {"issueId": issue_id, "templateId": template_id}
+    # Payload para la API REST
+    payload = {
+        "query": "{ getTestPlan(issueId: \"" + issue_id + "\") { issueId } }", # Query mínima requerida
+        "templateId": int(template_id), # Importante: debe ser entero
+        "outputFormat": "docx"
+    }
+
+    async with httpx.AsyncClient() as client:
+        # En la API REST de Xray, el reporte viene directamente en el cuerpo o como JSON con base64
+        response = await client.post(url, json=payload, headers=headers)
         
-        async with httpx.AsyncClient() as client:
-            response = await client.post(url, json={"query": query, "variables": variables}, headers=headers)
-            data = response.json()
+        if response.status_code != 200:
+            raise Exception(f"Error API REST Xray ({response.status_code}): {response.text}")
             
-            if 'errors' not in data:
-                report = data.get('data', {}).get(mutacion)
-                if report:
-                    print(f"¡Éxito! Usando mutación: {mutacion}")
-                    return report['reportFilename'], report['reportContent']
-    
-    # Si llega aquí es que ninguno funcionó
-    raise Exception(f"Ninguna mutación funcionó. Último error: {data.get('errors')}")
+        data = response.json()
+        # La API REST devuelve 'filename' y 'fileContent' (en base64)
+        return data.get('filename', 'TestPlan.docx'), data.get('fileContent')
 
 # --- FUNCION CREAR SUBTASK ESTRUCTURA CARPETAS ---
 def crear_subtarea_jira(parent_key, titulo):
@@ -389,23 +382,49 @@ async def main():
         # --- FASE 2: GENERACIÓN AUTOMÁTICA DE XRAY ---
         # -- Modificacion Pietro --
         print("\n4. Generando Test Plan automáticamente desde Xray...")
+        # --- FASE 2: GENERACIÓN AUTOMÁTICA DE XRAY ---
+        print("\n4. Generando Test Plan automáticamente desde Xray...")
         try:
             xray_token = await get_xray_token()
-            await listar_plantillas(xray_token) # Descomenta para ver tus IDs
             
-            # Obtenemos el ID interno del ticket desde los metadatos de Jira
+            # 1. Definimos la URL de la API REST (Evita el error de 'NoneType')
+            url_xray_gen = "https://xray.cloud.getxray.app/api/v2/documentgenerator/generate"
+            
+            # 2. EL ID: Basado en sistemas similares, prueba con el 505 o el 1
+            # Si falla con 505, cámbialo a "1" que es el ID por defecto de la primera plantilla preinstalada
+            template_id = 505 
+            
             issue_id = attachments_metadata[0].get('id') 
-            template_id = "1" # <--- REEMPLAZAR CON EL ID REAL
             
-            try:
-                filename_xray, content_b64 = await generar_documento_xray(xray_token, issue_id, template_id)
-                # ... resto del código de guardado ...
-            except Exception as e_xray:
-                print(f"   [!] Error al generar (esperado): {e_xray}")
-                print("   >>> REVISA ARRIBA EN EL LOG EL ID DE LA PLANTILLA <<<")
+            payload = {
+                "query": "{ getTestPlan(issueId: \"" + issue_id + "\") { issueId } }",
+                "templateId": template_id,
+                "outputFormat": "docx"
+            }
+            
+            headers = {
+                "Authorization": f"Bearer {xray_token}",
+                "Content-Type": "application/json"
+            }
+
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url_xray_gen, json=payload, headers=headers)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    filename_xray = data.get('filename', 'TestPlan_Generado.docx')
+                    content_b64 = data.get('fileContent')
+                    
+                    # Guardamos el archivo
+                    xray_path = Path(TARGET_DIR) / filename_xray
+                    with open(xray_path, "wb") as f:
+                        f.write(base64.b64decode(content_b64))
+                    print(f"   -> [Xray] Documento '{filename_xray}' generado con éxito.")
+                else:
+                    print(f"   [!] Error en Xray (Status {response.status_code}): {response.text}")
 
         except Exception as e:
-            print(f"   [Aviso] Error en fase Xray: {e}")
+            print(f"   -> [Aviso] Error Xray: {e}")
 
         # --- FASE 3: PROCESAMIENTO (CREACIÓN DE CARPETAS) ---
         target_path = Path(TARGET_DIR)
