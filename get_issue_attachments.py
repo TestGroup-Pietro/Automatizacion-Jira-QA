@@ -45,23 +45,39 @@ XRAY_GRAPHQL = os.getenv('XRAY_URL_GRAPHQL')
 attachments = [] 
 
 async def listar_plantillas(token):
-    url = XRAY_GRAPHQL
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    # Query simplificada
-    query = "{ getTemplates(limit: 10) { results { id name } } }"
+    # Intentamos con la URL de GraphQL para listar
+    url = "https://xray.cloud.getxray.app/api/v2/graphql"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    
+    # Esta es la query exacta para pedir IDs en Xray Cloud
+    query = """
+    {
+        getTemplates(limit: 50) {
+            results {
+                id
+                name
+            }
+        }
+    }
+    """
     
     async with httpx.AsyncClient() as client:
-        res = await client.post(url, json={"query": query}, headers=headers)
-        data = res.json()
-        print(f"DEBUG CRUDO XRAY: {data}") # Esto nos dirá qué está pasando
+        response = await client.post(url, json={"query": query}, headers=headers)
+        data = response.json()
         
-        templates = data.get('data', {}).get('getTemplates', {}).get('results', [])
-        print("\n--- LISTA DE PLANTILLAS XRAY ---")
-        for t in templates:
-            print(f"ID: {t['id']} | Nombre: {t['name']}")
-        if not templates:
-            print("No se encontraron plantillas. Revisa permisos o si la lista está vacía.")
-        print("--------------------------------\n")
+        print("\n=== [DIAGNÓSTICO] RESPUESTA DE PLANTILLAS ===")
+        print(data) # Esto mostrará el ID en el log de GitHub
+        
+        results = data.get('data', {}).get('getTemplates', {}).get('results', [])
+        if results:
+            for t in results:
+                print(f"✅ ENCONTRADA: ID={t['id']} | Nombre={t['name']}")
+        else:
+            print("❌ No se listaron plantillas. Posible error de permisos o query.")
+        print("============================================\n")
 # --- FUNCIO DE XRAY TOKEN PARA TESTPLAN ---
 async def get_xray_token():
     """Obtiene el token de acceso de Xray usando OAuth."""
@@ -386,7 +402,8 @@ async def main():
         print("\n4. Generando Test Plan automáticamente desde Xray...")
         try:
             xray_token = await get_xray_token()
-            
+            await listar_plantillas(xray_token)
+
             # 1. Definimos la URL de la API REST (Evita el error de 'NoneType')
             url_xray_gen = "https://xray.cloud.getxray.app/api/v2/documentgenerator/generate"
             
@@ -398,7 +415,7 @@ async def main():
             
             payload = {
                 "query": "{ getTestPlan(issueId: \"" + issue_id + "\") { issueId } }",
-                "templateId": template_id,
+                "templateId": int(template_id),
                 "outputFormat": "docx"
             }
             
@@ -428,7 +445,7 @@ async def main():
 
         # --- FASE 3: PROCESAMIENTO (CREACIÓN DE CARPETAS) ---
         target_path = Path(TARGET_DIR)
-        print("\n4. Creando estructuras de carpetas")
+        print("\n4. Creando estructuras de carpetas y subtareas...")
         
         # PARTE ESENCIAL 1
         # 1. Encontramos los archivos descargados que coincidan con el filtro 'hu'
@@ -438,25 +455,20 @@ async def main():
         
        # --- FASE 3: PROCESAMIENTO (ESTRUCTURA DE CARPETAS Y SUBTAREAS) ---
         target_path = Path(TARGET_DIR)
-        print("\n4. Creando estructuras de carpetas y subtareas...")
+        print("\n5. Creando estructuras de carpetas y subtareas...")
         
-        # 1. Identificamos qué archivos 'hu' existen realmente en la carpeta
+        # Identificamos qué archivos 'hu' existen realmente
         files_to_process = [p for p in target_path.iterdir() if p.is_file() and 'hu' in p.name.lower()]
         
-        # 2. Ejecución ÚNICA y controlada
+        processed_results = []
         if files_to_process:
-            # Ejecutamos el procesamiento de cada archivo de forma concurrente
             processed_results = await asyncio.gather(*(process_single_file(f) for f in files_to_process))
-            # Filtramos resultados exitosos
             archivos_generados = [name for name in processed_results if name is not None]
         else:
             print("   -> No se encontraron archivos 'hu' para procesar carpetas.")
             archivos_generados = []
 
-        print("5. Procesamiento de archivos adjuntos finalizado.")
-        
-        # Filtramos para obtener solo los nombres de archivos (Test Plans) generados con éxito
-        archivos_generados = [name for name in processed_results if name is not None]
+        print("6. Procesamiento de archivos adjuntos finalizado.")
 
         
         
@@ -465,13 +477,11 @@ async def main():
         # Creamos una lista final para el reporte del correo
         archivos_finales = list(archivos_generados)
 
-        # Agregamos también los nombre de los archivos originales descargados (HUs)
-        # para que el correo diga: "Se proceso HU-X y se generó Test-Plan-X"
-        for attachment in attachments:
-            if isinstance(attachment, dict) and 'filename' in attachment:
-                # Solo añadimos los originales que SÍ se descargaron/procesaron (los que tienen 'hu')
-                if 'hu' in attachment['filename'].lower():
-                    archivos_finales.append(attachment['filename'])
+        # Añadimos nombres de archivos originales descargados
+        for attachment in attachments_metadata:
+            fname = attachment.get('filename', '')
+            if 'hu' in fname.lower():
+                archivos_finales.append(fname)
 
         """
         Qué hace: Inicia un bucle (ciclo).
