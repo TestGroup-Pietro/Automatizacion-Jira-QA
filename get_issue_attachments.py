@@ -45,29 +45,33 @@ XRAY_GRAPHQL = os.getenv('XRAY_URL_GRAPHQL')
 attachments = [] 
 
 async def listar_plantillas(token):
-    # Endpoint específico de Xporter para Jira Cloud
-    url = "https://xray.cloud.getxray.app/api/v2/xporter/templates"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json"
-    }
+    url = "https://xray.cloud.getxray.app/api/v2/graphql"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    
+    # Probaremos las 3 variantes conocidas de Xray Cloud
+    queries = [
+        "{ getDocumentTemplates(limit: 50) { results { id name } } }", # Variante 1 (Moderna)
+        "{ getDocTemplates(limit: 50) { results { id name } } }",      # Variante 2
+        "{ getTemplates(limit: 50) { results { id name } } }"          # Variante 3 (La que falló antes)
+    ]
     
     async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(url, headers=headers)
-            if response.status_code == 200:
-                templates = response.json()
-                print("\n=== [ÉXITO] LISTA DE PLANTILLAS ENCONTRADAS ===")
+        for i, q in enumerate(queries):
+            print(f"   -> Probando variante de escaneo {i+1}...")
+            res = await client.post(url, json={"query": q}, headers=headers)
+            data = res.json()
+            
+            if "data" in data and data["data"]:
+                # Buscamos dinámicamente el campo que traiga los resultados
+                key = list(data["data"].keys())[0]
+                templates = data["data"][key].get("results", [])
+                
+                print(f"\n✅ ¡CONSEGUIDO! Los IDs están aquí:")
                 for t in templates:
-                    # Buscamos el ID y el Nombre
-                    id_plantilla = t.get('id')
-                    nombre = t.get('name')
-                    print(f"ID: {id_plantilla} | Nombre: {nombre}")
-                print("==============================================\n")
+                    print(f"   >> ID: {t['id']} | Nombre: {t['name']}")
+                return # Si funciona una, paramos.
             else:
-                print(f"❌ Error al listar (Status {response.status_code}): {response.text}")
-        except Exception as e:
-            print(f"❌ Falló la conexión con Xporter: {e}")
+                print(f"      Fallo variante {i+1}: {data.get('errors', [{}])[0].get('message', 'Desconocido')}")
 
 # --- FUNCIO DE XRAY TOKEN PARA TESTPLAN ---
 async def get_xray_token():
@@ -83,48 +87,55 @@ async def get_xray_token():
         return response.text.replace('"', '')
 
 async def generar_documento_xray(token, issue_id, template_id):
+    """Busca la plantilla y genera el documento automáticamente."""
     url = "https://xray.cloud.getxray.app/api/v2/graphql"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     
-    # Esta es la mutación estándar de Cloud
-    query = """
-    mutation ($issueId: String!, $templateId: String!) {
-        generateDocument(
-            issueId: $issueId,
-            templateId: $templateId,
-            outputFormat: "docx"
-        ) {
-            reportFilename
-            reportContent
-        }
-    }
-    """
+    # 1. PASO DE DESCUBRIMIENTO: Consultamos las plantillas disponibles
+    # Usamos 'getDocumentTemplates' que es el estándar actual en Xray Cloud
+    list_query = "{ getDocumentTemplates(limit: 20) { results { id name } } }"
     
-    variables = {
-        "issueId": issue_id,
-        "templateId": str(template_id)
-    }
-
     async with httpx.AsyncClient() as client:
-        response = await client.post(url, json={"query": query, "variables": variables}, headers=headers)
-        data = response.json()
+        res_list = await client.post(url, json={"query": list_query}, headers=headers)
+        data_list = res_list.json()
         
-        if 'errors' in data:
-            raise Exception(f"Error en GraphQL: {data['errors']}")
+        # Extraemos la lista de resultados
+        templates = data_list.get('data', {}).get('getDocumentTemplates', {}).get('results', [])
+        
+        if not templates:
+            # Si falla el anterior, intentamos con el nombre de campo antiguo por si acaso
+            alt_query = "{ getDocTemplates(limit: 20) { results { id name } } }"
+            res_list = await client.post(url, json={"query": alt_query}, headers=headers)
+            templates = res_list.json().get('data', {}).get('getDocTemplates', {}).get('results', [])
+
+        if not templates:
+            raise Exception("No se pudieron listar las plantillas de Xray. Revisa permisos.")
+
+        # 2. SELECCIÓN: Buscamos "Plantilla prueba" o la primera que diga "Test Plan"
+        # Si no encuentra ninguna por nombre, usará la primera de la lista (índice 0)
+        selected = next((t for t in templates if "Plantilla prueba" in t['name']), templates[0])
+        template_id = selected['id']
+        print(f"   -> [Auto-Discovery] Usando: '{selected['name']}' (ID: {template_id})")
+
+        # 3. GENERACIÓN: Usamos el ID encontrado para pedir el archivo
+        gen_mutation = """
+        mutation ($issueId: String!, $templateId: String!) {
+            generateDocument(issueId: $issueId, templateId: $templateId, outputFormat: "docx") {
+                reportFilename
+                reportContent
+            }
+        }
+        """
+        variables = {"issueId": issue_key, "templateId": str(template_id)}
+        
+        res_gen = await client.post(url, json={"query": gen_mutation, "variables": variables}, headers=headers)
+        data_gen = res_gen.json()
+        
+        if 'errors' in data_gen:
+            raise Exception(f"Error GraphQL al generar: {data_gen['errors']}")
             
-        report = data['data']['generateDocument']
+        report = data_gen['data']['generateDocument']
         return report['reportFilename'], report['reportContent']
-
-    async with httpx.AsyncClient() as client:
-        # En la API REST de Xray, el reporte viene directamente en el cuerpo o como JSON con base64
-        response = await client.post(url, json=payload, headers=headers)
-        
-        if response.status_code != 200:
-            raise Exception(f"Error API REST Xray ({response.status_code}): {response.text}")
-            
-        data = response.json()
-        # La API REST devuelve 'filename' y 'fileContent' (en base64)
-        return data.get('filename', 'TestPlan.docx'), data.get('fileContent')
 
 # --- FUNCION CREAR SUBTASK ESTRUCTURA CARPETAS ---
 def crear_subtarea_jira(parent_key, titulo):
@@ -404,8 +415,6 @@ async def main():
 
         # --- FASE 2: GENERACIÓN AUTOMÁTICA DE XRAY ---
         # -- Modificacion Pietro --
-        print("\n4. Generando Test Plan automáticamente desde Xray...")
-        # --- FASE 2: GENERACIÓN AUTOMÁTICA DE XRAY ---
         print("\n4. Generando Test Plan automáticamente desde Xray...")
         try:
             xray_token = await get_xray_token()
