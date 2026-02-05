@@ -5,6 +5,7 @@ from pathlib import Path
 from urllib import response
 import httpx # Reemplazo moderno y asíncrono de 'requests'
 from requests.auth import HTTPBasicAuth # Se mantiene para la autenticación básica
+import base64
 
 # =========================================================================
 # IMPORTACIÓN DE SERVICIOS
@@ -44,34 +45,7 @@ XRAY_GRAPHQL = os.getenv('XRAY_URL_GRAPHQL')
 # La mantendremos para coherencia, pero la pasaremos como parámetro.
 attachments = [] 
 
-async def listar_plantillas(token):
-    url = "https://xray.cloud.getxray.app/api/v2/graphql"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    
-    # Probaremos las 3 variantes conocidas de Xray Cloud
-    queries = [
-        "{ getDocumentTemplates(limit: 50) { results { id name } } }", # Variante 1 (Moderna)
-        "{ getDocTemplates(limit: 50) { results { id name } } }",      # Variante 2
-        "{ getTemplates(limit: 50) { results { id name } } }"          # Variante 3 (La que falló antes)
-    ]
-    
-    async with httpx.AsyncClient() as client:
-        for i, q in enumerate(queries):
-            print(f"   -> Probando variante de escaneo {i+1}...")
-            res = await client.post(url, json={"query": q}, headers=headers)
-            data = res.json()
-            
-            if "data" in data and data["data"]:
-                # Buscamos dinámicamente el campo que traiga los resultados
-                key = list(data["data"].keys())[0]
-                templates = data["data"][key].get("results", [])
-                
-                print(f"\n✅ ¡CONSEGUIDO! Los IDs están aquí:")
-                for t in templates:
-                    print(f"   >> ID: {t['id']} | Nombre: {t['name']}")
-                return # Si funciona una, paramos.
-            else:
-                print(f"      Fallo variante {i+1}: {data.get('errors', [{}])[0].get('message', 'Desconocido')}")
+
 
 # --- FUNCIO DE XRAY TOKEN PARA TESTPLAN ---
 async def get_xray_token():
@@ -88,7 +62,7 @@ async def get_xray_token():
 
 async def generar_documento_xray(token, issue_id, template_id):
     """Busca la plantilla y genera el documento automáticamente."""
-    url = "https://xray.cloud.getxray.app/api/v2/graphql"
+    url = XRAY_GRAPHQL
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     
     # 1. PASO DE DESCUBRIMIENTO: Consultamos las plantillas disponibles
@@ -101,7 +75,6 @@ async def generar_documento_xray(token, issue_id, template_id):
         
         # Extraemos la lista de resultados
         templates = data_list.get('data', {}).get('getDocumentTemplates', {}).get('results', [])
-        
         if not templates:
             # Si falla el anterior, intentamos con el nombre de campo antiguo por si acaso
             alt_query = "{ getDocTemplates(limit: 20) { results { id name } } }"
@@ -127,7 +100,6 @@ async def generar_documento_xray(token, issue_id, template_id):
         }
         """
         variables = {"issueId": issue_key, "templateId": str(template_id)}
-        
         res_gen = await client.post(url, json={"query": gen_mutation, "variables": variables}, headers=headers)
         data_gen = res_gen.json()
         
@@ -376,7 +348,7 @@ async def main():
     # httpx.AsyncClient es crucial para manejar la concurrencia eficiente
     async with httpx.AsyncClient(auth=auth, headers={"Accept": "application/json"}) as client:
         
-        # --- FASE 1: DESCARGA CONCURRENTE ---
+        # --- FASE 1: DESCARGA ---
         
         # 1. Obtener metadatos
         # llamamos a la API de Jira para obtener la lista de archivos adjuntos del ticket
@@ -418,73 +390,35 @@ async def main():
         print("\n4. Generando Test Plan automáticamente desde Xray...")
         try:
             xray_token = await get_xray_token()
-            await listar_plantillas(xray_token)
-
-            # 1. Definimos la URL de la API REST (Evita el error de 'NoneType')
-            url_xray_gen = "https://xray.cloud.getxray.app/api/v2/documentgenerator/generate"
+            # La función ahora hace todo: busca el ID y genera el archivo
+            fname_xray, content_b64 = await generar_documento_xray(xray_token, current_issue_key)
             
-            # 2. EL ID: Basado en sistemas similares, prueba con el 505 o el 1
-            # Si falla con 505, cámbialo a "1" que es el ID por defecto de la primera plantilla preinstalada
-            template_id = 505 
-            
-            issue_id = attachments_metadata[0].get('id') 
-            
-            payload = {
-                "query": "{ getTestPlan(issueId: \"" + issue_id + "\") { issueId } }",
-                "templateId": int(template_id),
-                "outputFormat": "docx"
-            }
-            
-            headers = {
-                "Authorization": f"Bearer {xray_token}",
-                "Content-Type": "application/json"
-            }
-
-            async with httpx.AsyncClient() as client:
-                response = await client.post(url_xray_gen, json=payload, headers=headers)
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    filename_xray = data.get('filename', 'TestPlan_Generado.docx')
-                    content_b64 = data.get('fileContent')
-                    
-                    # Guardamos el archivo
-                    xray_path = Path(TARGET_DIR) / filename_xray
-                    with open(xray_path, "wb") as f:
-                        f.write(base64.b64decode(content_b64))
-                    print(f"   -> [Xray] Documento '{filename_xray}' generado con éxito.")
-                else:
-                    print(f"   [!] Error en Xray (Status {response.status_code}): {response.text}")
-
+            xray_path = Path(TARGET_DIR) / fname_xray
+            with open(xray_path, "wb") as f:
+                f.write(base64.b64decode(content_b64))
+            print(f"   -> [Éxito] Documento '{fname_xray}' guardado en {TARGET_DIR}")
         except Exception as e:
-            print(f"   -> [Aviso] Error Xray: {e}")
+            print(f"   -> [Aviso] Falló la fase de Xray: {e}")
 
         # --- FASE 3: PROCESAMIENTO (CREACIÓN DE CARPETAS) ---
         target_path = Path(TARGET_DIR)
-        print("\n4. Creando estructuras de carpetas y subtareas...")
-        
-        # PARTE ESENCIAL 1
-        # 1. Encontramos los archivos descargados que coincidan con el filtro 'hu'
-        files_to_process = [p for p in target_path.iterdir() if p.is_file() and 'hu' in p.name.lower()] # igual se formatea
-        
-        # 2. Iniciar tareas de procesamiento concurrentes (usando ThreadPool para I/O/CPU)
-        
-       # --- FASE 3: PROCESAMIENTO (ESTRUCTURA DE CARPETAS Y SUBTAREAS) ---
-        target_path = Path(TARGET_DIR)
         print("\n5. Creando estructuras de carpetas y subtareas...")
-        
-        # Identificamos qué archivos 'hu' existen realmente
         files_to_process = [p for p in target_path.iterdir() if p.is_file() and 'hu' in p.name.lower()]
         
-        processed_results = []
         if files_to_process:
             processed_results = await asyncio.gather(*(process_single_file(f) for f in files_to_process))
             archivos_generados = [name for name in processed_results if name is not None]
         else:
-            print("   -> No se encontraron archivos 'hu' para procesar carpetas.")
+            print("   -> No hay archivos 'hu' para procesar.")
             archivos_generados = []
 
-        print("6. Procesamiento de archivos adjuntos finalizado.")
+        # --- FASE 4: EMAIL ---
+        if archivos_generados or (download_count > 0):
+            print("\n6. Enviando notificación por correo...")
+            # Aquí podrías añadir el nombre del archivo de Xray a la lista si quieres
+            await asyncio.to_thread(enviar_email, archivos_generados, current_issue_key)
+        else:
+            print("\n6. No se enviará correo.")
 
         
         
