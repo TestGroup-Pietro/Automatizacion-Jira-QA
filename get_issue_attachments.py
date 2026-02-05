@@ -61,17 +61,18 @@ async def get_xray_token():
         return response.text.replace('"', '')
 
 async def generar_documento_xray(token, issue_key):
-    """Busca la plantilla usando getTestPlans como sugirió el servidor y genera el doc."""
+    """Busca la plantilla usando getTestPlans con los campos correctos para Xray Cloud."""
     url = XRAY_GRAPHQL
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     
-    # 1. PASO DE DESCUBRIMIENTO: Usamos exactamente lo que sugirió el log
-    # Nota: getTestPlans en Xray Cloud devuelve los IDs que necesitamos para la generación
+    # 1. PASO DE DESCUBRIMIENTO
+    # Cambiamos 'id' por 'issueId' que es el estándar para el tipo TestPlan en Xray Cloud
     query = """
     {
         getTestPlans(limit: 20) {
             results {
-                id
+                issueId
+                jira(fields: ["summary"])
             }
         }
     }
@@ -81,27 +82,41 @@ async def generar_documento_xray(token, issue_key):
         res = await client.post(url, json={"query": query}, headers=headers)
         data = res.json()
         
-        # Validación de respuesta
         if "errors" in data:
-            print(f"   [DEBUG] Error sugerido por Jira: {data['errors'][0].get('message')}")
-            raise Exception(f"Error en Query: {data['errors'][0].get('message')}")
+            # Si issueId también falla, intentamos una query genérica de búsqueda
+            print(f"   [DEBUG] Reintentando búsqueda alternativa...")
+            query = "{ getTemplates(limit: 20) { results { id name } } }"
+            res = await client.post(url, json={"query": query}, headers=headers)
+            data = res.json()
 
-        # Extraemos los planes/plantillas
-        templates = data.get("data", {}).get("getTestPlans", {}).get("results", [])
+        # Extracción flexible de resultados
+        templates = []
+        if "data" in data and data["data"]:
+            first_key = list(data["data"].keys())[0]
+            templates = data["data"][first_key].get("results", [])
 
         if not templates:
-            print(f"   [DEBUG] Respuesta cruda: {data}")
-            raise Exception("No se encontraron Test Plans/Plantillas disponibles.")
+            raise Exception("No se encontraron plantillas o Test Plans disponibles en Xray.")
 
-        # Tomamos el primer ID disponible (o podrías filtrar si tuvieras el nombre)
-        # Como getTestPlans a veces no trae el 'name' directamente en la misma query, 
-        # usamos el primero de la lista para probar la conexión.
-        selected = templates[0]
-        template_id = selected['id']
-        print(f"   -> [Xray] Usando ID sugerido por getTestPlans: {template_id}")
+        # 2. SELECCIÓN DE LA PLANTILLA
+        # Intentamos buscar por el nombre que aparece en tu imagen: "Plantilla prueba"
+        selected = None
+        for t in templates:
+            # Buscamos el nombre en el campo 'name' o dentro del objeto 'jira' summary
+            summary = t.get('jira', {}).get('summary', '')
+            name = t.get('name', '')
+            if "Plantilla prueba" in summary or "Plantilla prueba" in name:
+                selected = t
+                break
+        
+        if not selected:
+            selected = templates[0]
+            
+        # Obtenemos el ID (puede venir como 'id' o 'issueId')
+        template_id = selected.get('issueId') or selected.get('id')
+        print(f"   -> [Xray] ID detectado: {template_id}")
 
-        # 2. GENERACIÓN
-        # Usamos issueKey porque en tus logs aparece que trabajas con 'SCRUM-128'
+        # 3. GENERACIÓN
         gen_mutation = """
         mutation ($issueKey: String!, $templateId: String!) {
             generateDocument(issueKey: $issueKey, templateId: $templateId, outputFormat: "docx") {
@@ -115,7 +130,6 @@ async def generar_documento_xray(token, issue_key):
         data_gen = res_gen.json()
         
         if 'errors' in data_gen:
-            # Si aquí falla con "Cannot query field generateDocument", es un tema de permisos del token
             raise Exception(f"Error en generación: {data_gen['errors'][0].get('message')}")
             
         report = data_gen['data']['generateDocument']
