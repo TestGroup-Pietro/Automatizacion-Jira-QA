@@ -46,64 +46,6 @@ XRAY_GRAPHQL = os.getenv('XRAY_URL_GRAPHQL')
 attachments = [] 
 
 
-
-# --- FUNCIO DE XRAY TOKEN PARA TESTPLAN ---
-async def get_xray_token():
-    """Obtiene el token de acceso de Xray usando OAuth."""
-    url = XRAY_AUTH
-    payload = {
-        "client_id": XRAY_ID, 
-        "client_secret": XRAY_PASSWORD
-    }
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url, json=payload)
-        response.raise_for_status()
-        return response.text.replace('"', '')
-
-async def generar_documento_xray(token, issue_key):
-    """
-    Lógica de inyección directa:
-    Usa el ID 10191 que ya descubrimos y prueba con el comando de exportación.
-    """
-    url = XRAY_GRAPHQL
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    
-    # El ID que tus logs confirmaron
-    ID_PLANTILLA = "10191" 
-    print(f"   -> [Xray] Intentando exportación directa con ID: {ID_PLANTILLA}")
-
-    # Cambiamos el nombre de la acción a la que el motor de Xray usa para exportar
-    # Si falla, el error nos dirá exactamente cuál es el nombre permitido.
-    query = """
-    mutation {
-        exportTestsReport(
-            issueKey: "%s", 
-            templateId: "%s", 
-            outputFormat: "docx"
-        ) {
-            reportFilename
-            reportContent
-        }
-    }
-    """ % (issue_key, ID_PLANTILLA)
-
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url, json={"query": query}, headers=headers)
-        data = response.json()
-        
-        if "errors" in data:
-            error_msg = data['errors'][0].get('message')
-            # Este print es vital: si falla, nos dirá "Did you mean...?"
-            print(f"   [DEBUG] El servidor rechazó el comando. Respuesta: {data}")
-            raise Exception(f"Fallo en nombre de comando: {error_msg}")
-
-        # Intentamos obtener el resultado de exportTestsReport
-        result = data.get("data", {}).get("exportTestsReport")
-        if not result:
-            raise Exception("No se recibió contenido del reporte.")
-
-        return result['reportFilename'], result['reportContent']
-
 # --- FUNCION CREAR SUBTASK ESTRUCTURA CARPETAS ---
 def crear_subtarea_jira(parent_key, titulo):
     """
@@ -220,103 +162,61 @@ def generate_folder_structure(base_path: Path, filename: str) -> Path:
         (root_hu_path / folder).mkdir(parents=True, exist_ok=True)
 
     return root_hu_path / "Estrategias de pruebas"
-    
-    # 2. Crear el documento 'Test Plan' dentro de 'Estrategias de pruebas'
-
-
-    # test_plan_path = root_hu_path / "Estrategias de pruebas"  # / f"Test Plan - {folder_name}.txt" se cambia para el - XrayTestplan
-
-    # Contenido plantilla del Test Plan
-    # content = f"""=======================================
-    # TEST PLAN GENERADO AUTOMÁTICAMENTE
-    # ========================================
-    # Archivo Origen: {filename}
-    # Fecha Generacion: {sys.version}
-
-    # 1. ALCANCE
-    #    - Pruebas funcionales para la historia: {folder_name}
-
-    # 2 ESTRATEGIAS
-    #    - Tipos de prueba: Funcionales, Regresión.
-
-    # 3. RECURSOS y HERRAMIENTAS
-    #    - Jira / Xray
-
-    # 4. CRITERIOS DE ACEPTACIÓN
-    #    (A definir según análisis de la HU adjunta)
-    # """
-    # 	with open(test_plan_path, 'w', encoding='utf-8') as f:
-    # 		f.write(content)
-
-    # 	return test_plan_path
 
 async def process_single_file(filepath: Path) -> str | None:
    """
-    MODIFICADO: Procesa el archivo, crea carpetas locales y crea subtareas en Jira.
+    Procesa la HU:
+    1. Usa 'generate_folder_structure' para crear carpetas y obtener la ruta.
+    2. Crea el archivo .txt de Estrategia en esa ruta.
+    3. Crea las subtareas en Jira de forma asíncrona.
     """
-    # 1. Filtramos por 'hu' como pediste
+    # 1. Filtro de seguridad por nombre
    if 'hu' not in filepath.name.lower():
         return None
-   
-   # Variable para el print (filepath.stem es el nombre sin .docx)
+    
    hu_name = filepath.stem
    print(f"\n--- Procesando HU: {hu_name} ---")
 
-   # --- NUEVA LÓGICA PIETRO: Creación de subtareas antes del flujo síncrono ---
-   # Esto se hace aquí para aprovechar el contexto asíncrono
-   subtareas_titulos = [
-        "Estrategia de Pruebas",
-        "Analisis y diseño de pruebas",
-        "Ejecucion de pruebas"
-    ]
-    
-   subtask_estrategia_key = None # Aquí guardaremos la key específica
 
+   try:
+        # 1. LLAMADA A TU FUNCIÓN DE ESTRUCTURA
+        # Esta función ya crea las 3 carpetas y nos da la ruta de 'Estrategias'
+        estrategia_folder = generate_folder_structure(filepath.parent, filepath.name)
 
-   print(f"   -> Creando subtareas visuales en Jira para {ISSUE_KEY}...")
-   for titulo in subtareas_titulos:
-        # Usamos to_thread para la creación de subtareas individuales
-        key_creada = await asyncio.to_thread(crear_subtarea_jira, ISSUE_KEY, titulo)
+        # 2. GENERACIÓN DEL DOCUMENTO TXT
+        test_plan_filename = f"Test Plan - {hu_name}.txt"
+        test_plan_path = estrategia_folder / test_plan_filename
 
-        # Si es la de estrategia, la guardamos para subir el archivo ahí
-        if titulo == "Estrategia de Pruebas":
-            subtask_estrategia_key = key_creada
+        content = f"""========================================
+TEST PLAN GENERADO PARA: {hu_name}
+========================================
+Archivo Origen: {filepath.name}
+Estado: Pendiente de Revisión
 
-    # Esta es la CLAVE: Ejecuta la función síncrona en un hilo separado
-    # y espera el resultado de forma asíncrona.
-    
-   def sync_processing_workflow(target_subtask_key):
-        try:
-            # 1. Creamos carpetas basadas en la HU
-            estrategia_folder = generate_folder_structure(filepath.parent, filepath.name)
-            
-            # 2. Buscamos si existe un archivo de Test Plan generado en la raíz para moverlo
-            target_path = filepath.parent
-            for xray_file in target_path.glob("*.docx"):
-                # Si el nombre NO tiene 'hu', asumimos que es el de Xray generado (ej: SCRUM-36.docx)
-                if 'hu' not in xray_file.name.lower():
-                    destino_xray = estrategia_folder / xray_file.name
-                    xray_file.rename(destino_xray)
-                    print(f"   [Xray] Movido a Estrategias: {xray_file.name}")
-                    
-                    # Subir a Jira
-                    success = upload_attachment_to_jira(
-                        destino_xray, target_subtask_key, 
-                        JIRA_URL, JIRA_USER, JIRA_TOKEN
-                    )
-                    return destino_xray.name if success else None
-            
-            return None
-        except Exception as e:
-            print(f"   [Error] {e}")
-            return None
-   return await asyncio.to_thread(sync_processing_workflow, subtask_estrategia_key)
-   #Esto basicamente dice que retorna lo siguiente:
+1. ESTRATEGIA DE PRUEBAS
+   - El análisis se basa en el adjunto: {filepath.name}
 
-   # Un Texto (str): El nombre del archivo generado (ej: "Test Plan - HU_Login.txt") 
-   # si todo salió bien (se crearon las carpetas y se subió a Jira).
+2. ALCANCE
+   - Pruebas funcionales y de aceptación.
+"""
 
-   # Nada (None): Si hubo algún error o falló la subida.
+        # Escribimos el archivo en la ruta que nos dio generate_folder_structure
+        with open(test_plan_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        
+        print(f"   -> [Sistema] Documento creado en: {test_plan_path.parent.name}/{test_plan_filename}")
+        
+        # 3. CREACIÓN DE SUBTAREAS EN JIRA
+        print(f"   -> Creando subtareas en Jira para {ISSUE_KEY}...")
+        subtareas = ["Estrategia de Pruebas", "Analisis y diseño de pruebas", "Ejecucion de pruebas"]
+        for titulo in subtareas:
+            await asyncio.to_thread(crear_subtarea_jira, ISSUE_KEY, titulo)
+
+        return test_plan_filename
+
+   except Exception as e:
+        print(f"   [Error] Falló el procesamiento de {hu_name}: {e}")
+        return None
 
 async def main():
 
@@ -369,7 +269,7 @@ async def main():
         download_results = await asyncio.gather(*download_tasks)
         download_count = sum(download_results) # Contamos cuántas descargas fueron exitosas
         
-        print(f"3. Proceso de descarga finalizado. Total descargado: {download_count}")
+        print(f"\n3. Proceso de descarga finalizado. Total descargado: {download_count}")
         
         # si no descargo nada, se sale
         if download_count == 0:
@@ -379,25 +279,9 @@ async def main():
 
 #----------------------------------------------------------------------------------------------------------
 #----------------------------------------------------------------------------------------------------------
-
-        # --- FASE 2: GENERACIÓN AUTOMÁTICA DE XRAY ---
-        # -- Modificacion Pietro --
-        print("\n4. Generando Test Plan automáticamente desde Xray...")
-        try:
-            xray_token = await get_xray_token()
-            # La función ahora hace todo: busca el ID y genera el archivo
-            fname_xray, content_b64 = await generar_documento_xray(xray_token, current_issue_key)
-            
-            xray_path = Path(TARGET_DIR) / fname_xray
-            with open(xray_path, "wb") as f:
-                f.write(base64.b64decode(content_b64))
-            print(f"   -> [Éxito] Documento '{fname_xray}' guardado en {TARGET_DIR}")
-        except Exception as e:
-            print(f"   -> [Aviso] Falló la fase de Xray: {e}")
-
         # --- FASE 3: PROCESAMIENTO (CREACIÓN DE CARPETAS) ---
         target_path = Path(TARGET_DIR)
-        print("\n5. Creando estructuras de carpetas y subtareas...")
+        print("\n4. Creando estructuras de carpetas y subtareas...")
         files_to_process = [p for p in target_path.iterdir() if p.is_file() and 'hu' in p.name.lower()]
         
         if files_to_process:
@@ -409,11 +293,11 @@ async def main():
 
         # --- FASE 4: EMAIL ---
         if archivos_generados or (download_count > 0):
-            print("\n6. Enviando notificación por correo...")
+            print("\n5. Enviando notificación por correo...")
             # Aquí podrías añadir el nombre del archivo de Xray a la lista si quieres
             await asyncio.to_thread(enviar_email, archivos_generados, current_issue_key)
         else:
-            print("\n6. No se enviará correo.")
+            print("\n5. No se enviará correo.")
 
         
         
