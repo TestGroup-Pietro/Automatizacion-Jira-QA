@@ -290,16 +290,6 @@ async def main():
         else:
             print("   -> No hay archivos 'hu' para procesar.")
             archivos_generados = []
-
-        # --- FASE 4: EMAIL ---
-        if archivos_generados or (download_count > 0):
-            print("\n5. Enviando notificación por correo...")
-            # Aquí podrías añadir el nombre del archivo de Xray a la lista si quieres
-            await asyncio.to_thread(enviar_email, archivos_generados, current_issue_key)
-        else:
-            print("\n5. No se enviará correo.")
-
-        
         
         # --- FASE 4: NOTIFICACIÓN FINAL y REPORTE ---
         
@@ -323,12 +313,12 @@ async def main():
         
         # Verificamos si se generó algún trabajo nuevo
         if archivos_generados:
-            print("\n6. Enviando notificación por correo electrónico.")
+            print("\n5. Enviando notificación por correo electrónico.")
             # Enviamos el email. Usamos 'asyncio.to_thread' porque 'enviar_email'
             # es una funcion asincrona (bloqueante) y no queremos congelar el script
             await asyncio.to_thread(enviar_email, archivos_finales, current_issue_key)
         else:
-            print("\n6. No se enviará correo. No se generaron archivos XLSX.")
+            print("\n5. No se enviará correo. No se generaron archivos XLSX.")
 
 
 
